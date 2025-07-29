@@ -11,32 +11,66 @@ from datetime import datetime, timedelta
 import logging
 import traceback
 import math
+import asyncio
+from datetime import datetime, date
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+from contextlib import asynccontextmanager
+import aiohttp
+
+load_dotenv()
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Sistema de Dimensionado Fotovoltaico Profesional", version="3.0.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    google_api_key = os.getenv("GOOGLE_MAPS_API_KEY")
+    if not google_api_key:
+        logger.warning("⚠️  GOOGLE_MAPS_API_KEY no encontrada en .env - funcionalidad de geocodificación y Solar API deshabilitada")
+    else:
+        logger.info("✅ Google Maps API Key cargada correctamente desde .env")
+        
+    yield  # Aquí FastAPI levanta la app
+    
+    # Si hubiera necesidad, insertar código de shutdown aquí
+
+app = FastAPI(title="Sistema de Dimensionado Fotovoltaico Profesional", version="3.0.0", lifespan=lifespan)
+
+# ======================== CONFIGURACIÓN SOLAR API ========================
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
+SOLAR_API_BASE_URL = "https://solar.googleapis.com/v1"
+GEOCODING_API_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 
 # ======================== MODELOS PYDANTIC ========================
 class SimulateRequest(BaseModel):
-    lat: float = Field(..., ge=-90, le=90, description="Latitud en grados decimales")
-    lon: float = Field(..., ge=-180, le=180, description="Longitud en grados decimales")
+    # Nuevos campos para dirección
+    address: Optional[str] = Field(None, description="Dirección postal para geocodificación automática")
+    
+    # Campos existentes (ahora opcionales si se usa address)
+    lat: Optional[float] = Field(None, ge=-90, le=90, description="Latitud en grados decimales")
+    lon: Optional[float] = Field(None, ge=-180, le=180, description="Longitud en grados decimales")
     annual_consumption_kwh: Optional[float] = Field(4200, gt=0, description="Consumo anual en kWh")
     roof_area_m2: Optional[float] = Field(None, gt=0, description="Área disponible del tejado en m²")
-    roof_tilt: Optional[float] = Field(None, ge=0, le=90, description="Inclinación del tejado en grados (si es fija)")
-    roof_azimuth: Optional[float] = Field(None, ge=0, le=360, description="Azimut del tejado en grados (180=Sur)")
+    roof_tilt: Optional[float] = Field(None, ge=0, le=90, description="Inclinación del tejado en grados")
+    roof_azimuth: Optional[float] = Field(None, ge=0, le=360, description="Azimut del tejado en grados")
     installation_type: Optional[str] = Field("optimal", description="Tipo: 'optimal', 'coplanar', 'fixed'")
     coverage_percentage: Optional[float] = Field(85, ge=30, le=120, description="Porcentaje de consumo a cubrir")
-    shading_factor: Optional[float] = Field(0.95, ge=0.7, le=1.0, description="Factor de sombreado (0.95 = 5% pérdidas)")
+    shading_factor: Optional[float] = Field(0.95, ge=0.7, le=1.0, description="Factor de sombreado")
     electricity_price: Optional[float] = Field(0.28, gt=0, description="Precio electricidad €/kWh")
     surplus_price: Optional[float] = Field(0.055, gt=0, description="Precio compensación excedentes €/kWh")
+    
+    # Control de uso de Solar API
+    use_solar_api: Optional[bool] = Field(True, description="Usar Google Solar API si está disponible")
 
 class GeometryAnalysis(BaseModel):
     optimal_tilt: float
     optimal_azimuth: float
     installation_tilt: float
     installation_azimuth: float
+    with_support_structure: bool
     annual_irradiation_optimal: float
     annual_irradiation_real: float
     orientation_losses_percent: float
@@ -115,6 +149,19 @@ class SimulateResponse(BaseModel):
     autoconsumption_analysis: AutoconsumptionAnalysis
     economic_analysis: EconomicAnalysis
 
+class SolarApiData(BaseModel):
+    """Datos obtenidos de Google Solar API"""
+    source: str = "google_solar_api"
+    roof_segments: List[Dict] = []
+    solar_potential_kwh_per_year: Optional[float] = None
+    carbon_offset_factor_kg_per_mwh: Optional[float] = None
+    panel_capacity_watts: Optional[float] = None
+    panels_count: Optional[int] = None
+    max_array_panels_count: Optional[int] = None
+    max_array_area_meters2: Optional[float] = None
+    coverage_percent: Optional[float] = None
+    attribution_required: bool = True
+
 # ======================== CONSTANTES Y CONFIGURACIÓN ========================
 # Base de datos de módulos fotovoltaicos actuales
 PV_MODULES = {
@@ -171,6 +218,158 @@ SYSTEM_COSTS = {
     "insurance_annual": 8,    # €/kWp/año
     "degradation_annual": 0.007  # 0.5%/año
 }
+
+# ======================== FUNCIONES DE GEOCODIFICACIÓN ========================
+async def geocode_address(address: str) -> tuple[float, float]:
+    """Geocodifica una dirección usando Google Maps API"""
+  
+    if not GOOGLE_MAPS_API_KEY:
+        raise HTTPException(
+            status_code=400,
+            detail="Geocodificación no disponible: GOOGLE_MAPS_API_KEY no configurada en .env"
+        )
+    
+    params = {
+        'address': address,
+        'key': GOOGLE_MAPS_API_KEY,
+        'region': 'es',  # Bias hacia España
+        'language': 'es'
+    }
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(GEOCODING_API_URL, params=params, timeout=10) as response:
+                response.raise_for_status()
+                data = await response.json()
+        
+        if data['status'] != 'OK' or not data.get('results'):
+            raise HTTPException(
+                status_code=400, 
+                detail=f"No se pudo geocodificar la dirección: {data.get('status', 'ERROR')}"
+            )
+        
+        location = data['results'][0]['geometry']['location']
+        formatted_address = data['results'][0]['formatted_address']
+        
+        logger.info(f"Dirección geocodificada: '{address}' → '{formatted_address}' ({location['lat']}, {location['lng']})")
+        
+        return location['lat'], location['lng']
+        
+    except aiohttp.ClientError as e:
+        logger.error(f"Error en geocodificación: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error de geocodificación: {str(e)}")
+
+# ======================== FUNCIONES DE SOLAR API ========================
+async def get_building_insights(latitude: float, longitude: float) -> Optional[SolarApiData]:
+    """Obtiene datos del edificio desde Google Solar API"""
+
+    if not GOOGLE_MAPS_API_KEY:
+        logger.warning("Solar API no disponible: GOOGLE_MAPS_API_KEY no configurada")
+        return None
+
+    url = f"{SOLAR_API_BASE_URL}/buildingInsights:findClosest"
+    params = {
+        'location.latitude': latitude,
+        'location.longitude': longitude,
+        'requiredQuality': 'MEDIUM',  # MEDIUM, HIGH, or LOW
+        'key': GOOGLE_MAPS_API_KEY
+    }
+    
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, timeout=15) as response:
+                if response.status == 404:
+                    logger.info(f"No hay cobertura Solar API para {latitude}, {longitude}")
+                    return None
+                
+                response.raise_for_status()
+                data = await response.json()
+        
+        # Procesar respuesta
+        solar_data = process_solar_api_response(data)
+        logger.info(f"Solar API: encontrados {len(solar_data.roof_segments)} segmentos de tejado")
+        
+        return solar_data
+        
+    except aiohttp.ClientError as e:
+        logger.warning(f"Error Solar API: {str(e)}")
+        return None
+    except Exception as e:
+        logger.error(f"Error procesando Solar API: {str(e)}")
+        return None
+
+def process_solar_api_response(data: dict) -> SolarApiData:
+    """Procesa la respuesta de Solar API y extrae datos relevantes"""
+    
+    roof_segments = []
+    solar_potential = data.get('solarPotential', {})
+    
+    # Procesar segmentos de tejado
+    for segment in solar_potential.get('roofSegmentStats', []):
+        # Convertir azimuth de Solar API (0°=Norte, 180°=Sur) al estándar fotovoltaico
+        azimuth_solar_api = segment.get('azimuthDegrees', 180)
+        azimuth_pv_standard = (azimuth_solar_api + 180) % 360  # 0°=Norte → 180°=Sur
+        
+        segment_data = {
+            'segment_index': segment.get('segmentIndex', 0),
+            'tilt_degrees': segment.get('pitchDegrees', 30),
+            'azimuth_degrees': azimuth_pv_standard,  # Convertido
+            'area_meters2': segment.get('stats', {}).get('areaMeters2', 0),
+            'sunlight_quantiles': segment.get('stats', {}).get('sunlightQuantiles', []),
+            'panels_count': segment.get('panelsCount', 0)
+        }
+        roof_segments.append(segment_data)
+    
+    # Datos del potencial solar
+    max_array_area = None
+    max_panels = None
+    
+    if 'maxArrayAreaMeters2' in solar_potential:
+        max_array_area = solar_potential['maxArrayAreaMeters2']
+    
+    if 'maxArrayPanelsCount' in solar_potential:
+        max_panels = solar_potential['maxArrayPanelsCount']
+    
+    return SolarApiData(
+        roof_segments=roof_segments,
+        solar_potential_kwh_per_year=solar_potential.get('maxSunshineHoursPerYear'),
+        carbon_offset_factor_kg_per_mwh=solar_potential.get('carbonOffsetFactorKgPerMwh'),
+        panel_capacity_watts=solar_potential.get('panelCapacityWatts', 400),
+        panels_count=solar_potential.get('panelsCount'),
+        max_array_panels_count=max_panels,
+        max_array_area_meters2=max_array_area,
+        coverage_percent=None  # Se calculará después
+    )
+
+def select_best_roof_segment(solar_data: SolarApiData) -> Optional[dict]:
+    """Selecciona el mejor segmento de tejado para la instalación"""
+    
+    if not solar_data.roof_segments:
+        return None
+    
+    # Criterios de selección: mayor área + mejor orientación (cerca de Sur = 180°)
+    best_segment = None
+    best_score = -1
+    
+    for segment in solar_data.roof_segments:
+        area = segment.get('area_meters2', 0)
+        azimuth = segment.get('azimuth_degrees', 180)
+        
+        # Penalización por desviación del sur (180°)
+        azimuth_deviation = min(abs(azimuth - 180), 360 - abs(azimuth - 180))
+        orientation_factor = max(0.3, 1 - azimuth_deviation / 90)  # Máx penalización 70%
+        
+        # Score combinado
+        score = area * orientation_factor
+        
+        if score > best_score and area > 10:  # Mín 10m²
+            best_score = score
+            best_segment = segment
+    
+    logger.info(f"Mejor segmento: {best_segment['area_meters2']:.1f}m², "
+                f"{best_segment['tilt_degrees']:.1f}°, {best_segment['azimuth_degrees']:.1f}°")
+    
+    return best_segment
 
 # ======================== FUNCIONES DE DATOS CLIMÁTICOS ========================
 def get_pvgis_data(lat: float, lon: float) -> tuple:
@@ -271,26 +470,43 @@ def calculate_orientation_losses(lat: float, tilt: float, azimuth: float,
     return max(0, min(losses, 50))  # Limitar entre 0-50%
 
 # ======================== FUNCIONES DE DIMENSIONADO ========================
-def determine_installation_geometry(lat: float, roof_tilt: Optional[float], 
-                                  roof_azimuth: Optional[float], 
-                                  installation_type: str,
-                                  optimal_tilt: float) -> tuple:
-    """Determina la geometría final de instalación"""
-    
+def determine_installation_geometry(
+    lat: float,
+    roof_tilt: Optional[float], 
+    roof_azimuth: Optional[float], 
+    installation_type: str,
+    optimal_tilt: float
+) -> tuple:
+    """
+    Determines final installation geometry (tilt, azimuth)
+    and whether support structure is required (for flat roofs).
+    """
+    with_support = False  # Default: no extra structure
+
     if installation_type == "coplanar" and roof_tilt is not None:
-        # Instalación coplanar - usar ángulos del tejado
-        final_tilt = roof_tilt
+        if roof_tilt < 10:
+            final_tilt = optimal_tilt
+            with_support = True
+            logger.info(f"Flat roof detected: {roof_tilt}° < 10° → using optimal tilt: {final_tilt:.1f}° with support structure.")
+        else:
+            final_tilt = roof_tilt
+            logger.info(f"Coplanar installation with roof tilt: {final_tilt:.1f}° (no support needed).")
         final_azimuth = roof_azimuth if roof_azimuth is not None else 180
+        logger.info(f"Using azimuth: {final_azimuth:.1f}°")
+
     elif installation_type == "fixed" and roof_tilt is not None:
-        # Instalación con inclinación fija especificada
         final_tilt = roof_tilt
         final_azimuth = roof_azimuth if roof_azimuth is not None else 180
+        logger.info(f"Fixed structure with tilt: {final_tilt:.1f}°, azimuth: {final_azimuth:.1f}° (no support needed).")
+
     else:
-        # Instalación óptima
         final_tilt = optimal_tilt
-        final_azimuth = 180  # Sur
-    
-    return final_tilt, final_azimuth
+        final_azimuth = 180
+        with_support = True
+        logger.info(f"No geometry provided → using optimal: tilt={final_tilt:.1f}°, azimuth={final_azimuth}° with support structure.")
+
+    return final_tilt, final_azimuth, with_support
+
 
 def select_pv_module() -> dict:
     """Selecciona el módulo fotovoltaico por defecto"""
@@ -772,25 +988,92 @@ async def simulate_pv_system(request: SimulateRequest):
     try:
         logger.info(f"Iniciando simulación para lat={request.lat}, lon={request.lon}")
         
-        # 1. OBTENER DATOS CLIMÁTICOS Y GEOMETRÍA ÓPTIMA
-        weather_data, optimal_tilt, optimal_azimuth = get_pvgis_data(request.lat, request.lon)
+        # Variables para respuesta
+        solar_api_data = None
+        data_source = "manual"
+        attribution_text = None
+        
+        # =================== FASE 1: DETERMINAR COORDENADAS ===================
+        if request.address:
+            logger.info(f"Geocodificando dirección: {request.address}")
+            lat, lon = await geocode_address(request.address)
+            data_source = "geocoded"
+        elif request.lat is not None and request.lon is not None:
+            lat, lon = request.lat, request.lon
+        else:
+            raise HTTPException(
+                status_code=400, 
+                detail="Debe proporcionar 'address' o coordenadas 'lat'/'lon'"
+            )
+        
+        # =================== FASE 2: INTENTAR SOLAR API ===================
+        roof_tilt_final = request.roof_tilt
+        roof_azimuth_final = request.roof_azimuth  
+        roof_area_final = request.roof_area_m2
+        installation_type_final = request.installation_type
+        
+        if roof_tilt_final is not None and roof_azimuth_final is not None and roof_area_final is not None:
+            use_solar = False
+        else:
+            use_solar = request.use_solar_api
+        
+        if installation_type_final != "optimal" and use_solar and GOOGLE_MAPS_API_KEY:
+            logger.info("Consultando Google Solar API...")
+            solar_api_data = await get_building_insights(lat, lon)
+            
+            if solar_api_data:
+                data_source = "google_solar_api"
+                attribution_text = "Source: Includes solar data from Google"
+                
+                # Seleccionar mejor segmento de tejado
+                best_segment = select_best_roof_segment(solar_api_data)
+                
+                if best_segment:
+                    # Usar datos de Solar API si no se proporcionaron manualmente
+                    if roof_tilt_final is None:
+                        roof_tilt_final = best_segment['tilt_degrees']
+                    if roof_azimuth_final is None:
+                        roof_azimuth_final = best_segment['azimuth_degrees']
+                    if roof_area_final is None:
+                        roof_area_final = best_segment['area_meters2']
+                    
+                    # Si el tejado es muy plano, cambiar a configuración óptima
+                    if roof_tilt_final < 10:
+                        installation_type_final = "optimal"
+                        logger.info("Tejado plano detectado via Solar API, usando configuración óptima")
+                    else:
+                        installation_type_final = "coplanar"
+                    
+                    logger.info(f"Usando datos Solar API: tilt={roof_tilt_final}°, "
+                               f"azimuth={roof_azimuth_final}°, area={roof_area_final}m²")
+                else:
+                    logger.warning("Solar API no encontró segmentos de tejado útiles")
+            else:
+                logger.info("Solar API sin cobertura, usando método tradicional")
+        
+        # =================== FASE 3: SIMULACIÓN TRADICIONAL ===================
+        # Continuar con la lógica existente usando los valores finales
+        logger.info(f"Iniciando simulación para lat={lat}, lon={lon}")
+        
+        # 1. Obtener datos climáticos
+        weather_data, optimal_tilt, optimal_azimuth = get_pvgis_data(lat, lon)
         
         weather_data.index = (
-            weather_data.index           # viene en UTC
-            .tz_convert(LOCAL_TZ)        # pasa a Europe/Madrid
-            .map(lambda ts: ts.replace(year=TARGET_YEAR))  # fuerza año 2024
+            weather_data.index
+            .tz_convert(LOCAL_TZ)
+            .map(lambda ts: ts.replace(year=TARGET_YEAR))
         )
-        # 2. DETERMINAR GEOMETRÍA DE INSTALACIÓN
-        installation_tilt, installation_azimuth = determine_installation_geometry(
-            request.lat, request.roof_tilt, request.roof_azimuth, 
-            request.installation_type, optimal_tilt
+        
+        # 2. Determinar geometría final
+        installation_tilt, installation_azimuth, with_support = determine_installation_geometry(
+            lat, roof_tilt_final, roof_azimuth_final, installation_type_final, optimal_tilt
         )
         
         # 3. CALCULAR IRRADIACIÓN PARA GEOMETRÍAS ÓPTIMA Y REAL
-        site = location.Location(request.lat, request.lon, tz='Europe/Madrid')
+        site = location.Location(lat, lon, tz='Europe/Madrid')
         
         # Irradiación óptima
-        solar_pos = solarposition.get_solarposition(weather_data.index, request.lat, request.lon)
+        solar_pos = solarposition.get_solarposition(weather_data.index, lat, lon)
         poa_optimal = irradiance.get_total_irradiance(
             optimal_tilt, 180, solar_pos['apparent_zenith'], solar_pos['azimuth'],
             weather_data['dni'], weather_data['ghi'], weather_data['dhi']
@@ -807,7 +1090,7 @@ async def simulate_pv_system(request: SimulateRequest):
         
         # 4. CALCULAR PÉRDIDAS POR ORIENTACIÓN
         orientation_losses = calculate_orientation_losses(
-            request.lat, installation_tilt, installation_azimuth, optimal_tilt
+            lat, installation_tilt, installation_azimuth, optimal_tilt
         )
         shading_losses = (1 - request.shading_factor) * 100
         
@@ -836,7 +1119,7 @@ async def simulate_pv_system(request: SimulateRequest):
         
         # 9. SIMULAR PRODUCCIÓN CON PVLIB
         production_results = calculate_pv_production(
-            weather_data, request.lat, request.lon,
+            weather_data, lat, lon,
             installation_tilt, installation_azimuth,
             modules_per_string, strings_parallel, module, inverter
         )
@@ -888,9 +1171,10 @@ async def simulate_pv_system(request: SimulateRequest):
         # 14. CONSTRUIR RESPUESTA
         response = SimulateResponse(
             location_info={
-                "latitude": request.lat,
-                "longitude": request.lon,
+                "latitude": lat,
+                "longitude": lon,
                 "timezone": "Europe/Madrid",
+                "data_source": data_source,
                 "calculation_date": datetime.now().isoformat()
             },
             
@@ -899,6 +1183,7 @@ async def simulate_pv_system(request: SimulateRequest):
                 optimal_azimuth=optimal_azimuth,
                 installation_tilt=installation_tilt,
                 installation_azimuth=installation_azimuth,
+                with_support_structure=with_support,
                 annual_irradiation_optimal=round(annual_irradiation_optimal, 0),
                 annual_irradiation_real=round(annual_irradiation_real, 0),
                 orientation_losses_percent=round(orientation_losses, 2),
@@ -963,6 +1248,18 @@ async def simulate_pv_system(request: SimulateRequest):
             )
         )
         
+        if solar_api_data:
+            response.location_info["google_solar_data"] = {
+                "roof_segments_found": len(solar_api_data.roof_segments),
+                "max_array_area_m2": solar_api_data.max_array_area_meters2,
+                "max_panels_count": solar_api_data.max_array_panels_count,
+                "attribution": attribution_text
+            }
+        
+        logger.info(
+            f"Ángulos finales usados para simulación: tilt={installation_tilt}°, "
+            f"azimuth={installation_azimuth}°"
+        )
         logger.info(f"Simulación completada: {total_modules_final} módulos, {final_kwp:.1f} kWp")
         logger.info(f"Producción: {production_results['annual_production']:.0f} kWh/año")
         logger.info(f"Autoconsumo: {autoconsumption_results['self_consumption_rate']:.1f}%")
@@ -1041,6 +1338,66 @@ async def quick_estimate(lat: float, lon: float, annual_consumption_kwh: float =
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error en estimación: {str(e)}")
+
+@app.post("/geocode")
+async def geocode_endpoint(address: str):
+    """Endpoint independiente para geocodificación"""
+    try:
+        if not GOOGLE_MAPS_API_KEY:
+            return {
+                "address": address,
+                "error": "GOOGLE_MAPS_API_KEY no configurada en .env",
+                "success": False
+            }
+        lat, lon = await geocode_address(address)
+        return {
+            "address": address,
+            "latitude": lat,
+            "longitude": lon,
+            "success": True
+        }
+    except HTTPException as e:
+        return {
+            "address": address,
+            "error": e.detail,
+            "success": False
+        }
+
+@app.post("/solar-insights")
+async def solar_insights_endpoint(lat: float, lon: float):
+    """Endpoint independiente para Solar API"""
+    try:
+        if not GOOGLE_MAPS_API_KEY:
+            return {
+                "latitude": lat,
+                "longitude": lon,
+                "error": "GOOGLE_MAPS_API_KEY no configurada en .env",
+                "success": False
+            }
+
+        solar_data = await get_building_insights(lat, lon)
+        if solar_data:
+            return {
+                "latitude": lat,
+                "longitude": lon,
+                "solar_data": solar_data.dict(),
+                "attribution": "Source: Includes solar data from Google",
+                "success": True
+            }
+        else:
+            return {
+                "latitude": lat,
+                "longitude": lon,
+                "message": "No hay cobertura Solar API para esta ubicación",
+                "success": False
+            }
+    except Exception as e:
+        return {
+            "latitude": lat,
+            "longitude": lon,
+            "error": str(e),
+            "success": False
+        }
 
 if __name__ == "__main__":
     import uvicorn
