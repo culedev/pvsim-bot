@@ -3,9 +3,8 @@ from typing import Optional, List, Dict
 
 class SimulateRequest(BaseModel):
     # Nuevos campos para dirección
-    address: Optional[str] = Field(None, description="Dirección postal para geocodificación automática")
-    
-    # Campos existentes (ahora opcionales si se usa address)
+    address: Optional[str] = Field(None, description="Dirección postal para geocodificación automática")   
+    # Campos opcionales si se usa address
     lat: Optional[float] = Field(None, ge=-90, le=90, description="Latitud en grados decimales")
     lon: Optional[float] = Field(None, ge=-180, le=180, description="Longitud en grados decimales")
     annual_consumption_kwh: Optional[float] = Field(4200, gt=0, description="Consumo anual en kWh")
@@ -17,7 +16,10 @@ class SimulateRequest(BaseModel):
     shading_factor: Optional[float] = Field(0.95, ge=0.7, le=1.0, description="Factor de sombreado")
     electricity_price: Optional[float] = Field(0.28, gt=0, description="Precio electricidad €/kWh")
     surplus_price: Optional[float] = Field(0.055, gt=0, description="Precio compensación excedentes €/kWh")
-    
+    cable_length_dc_m: float = Field(15, gt=0, description="Longitud del cable DC en metros (por defecto 15m)")
+    cable_section_dc_mm2: float = Field(6, gt=0, description="Sección del cable DC en mm² (por defecto 6mm²)")
+    cable_length_ac_m: float = Field(10, gt=0, description="Longitud del cable AC en metros (por defecto 10m)")
+    cable_section_ac_mm2: float = Field(10, gt=0, description="Sección del cable AC en mm² (por defecto 10mm²)")
     # Control de uso de Solar API
     use_solar_api: Optional[bool] = Field(True, description="Usar Google Solar API si está disponible")
 
@@ -66,6 +68,7 @@ class EnergyProduction(BaseModel):
     specific_yield_kwh_kwp: float
     performance_ratio: float
     capacity_factor_percent: float
+    max_power_kw: float
 
 class EconomicAnalysis(BaseModel):
     system_cost_eur: float
@@ -96,13 +99,35 @@ class AutoconsumptionAnalysis(BaseModel):
     self_sufficiency_rate_percent: float
     monthly_analysis: List[MonthlyAnalysis]
 
+class CableAnalysis(BaseModel):
+    cable_length_dc_m: float
+    cable_section_dc_mm2: float
+    voltage_drop_dc_percent: float
+    power_loss_dc_percent: float
+    current_dc_a: float
+    recommended_dc_section_mm2: int
+    cable_length_ac_m: float
+    cable_section_ac_mm2: float
+    voltage_drop_ac_percent: float
+    power_loss_ac_percent: float
+    current_ac_a: float
+    recommended_ac_section_mm2: int
+    note: str
+
+class CableProtections(BaseModel):
+    recommended_fuse_dc_a: float
+    recommended_breaker_ac_a: float
+
 class SimulateResponse(BaseModel):
     location_info: Dict
     geometry_analysis: GeometryAnalysis
     technical_specs: TechnicalSpecs
     system_config: SystemConfiguration
     electrical_analysis: ElectricalAnalysis
+    cable_analysis: CableAnalysis
+    protections: CableProtections
     energy_production: EnergyProduction
+    environmental_impact: object
     autoconsumption_analysis: AutoconsumptionAnalysis
     economic_analysis: EconomicAnalysis
 
