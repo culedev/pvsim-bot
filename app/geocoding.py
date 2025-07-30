@@ -3,7 +3,9 @@ from fastapi import HTTPException
 import logging
 from app.constants import GOOGLE_MAPS_API_KEY, GEOCODING_API_URL
 
+import logging
 logger = logging.getLogger(__name__)
+
 
 async def geocode_address(address: str) -> tuple[float, float]:
     """Geocodifica una dirección usando Google Maps API"""

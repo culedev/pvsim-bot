@@ -105,19 +105,32 @@ class CableAnalysis(BaseModel):
     voltage_drop_dc_percent: float
     power_loss_dc_percent: float
     current_dc_a: float
-    recommended_dc_section_mm2: int
     cable_length_ac_m: float
     cable_section_ac_mm2: float
     voltage_drop_ac_percent: float
     power_loss_ac_percent: float
     current_ac_a: float
-    recommended_ac_section_mm2: int
     note: str
+
+class CableDetail(BaseModel):
+    chosen_section_mm2: Optional[float]
+    voltage_drop_pct: Optional[float]
+    ampacity_A: Optional[float]
+    resistivity_ohm_km: Optional[float]
+    material: str
+    meets_voltage_drop: bool
+    meets_ampacity: bool
+    reason: str
+
+class CableSectionAnalysis(BaseModel):
+    cable_dc: CableDetail
+    cable_ac: CableDetail
 
 class CableProtections(BaseModel):
     recommended_fuse_dc_a: float
     recommended_breaker_ac_a: float
 
+# ---------- Respuesta de alto nivel ----------
 class SimulateResponse(BaseModel):
     location_info: Dict
     geometry_analysis: GeometryAnalysis
@@ -125,9 +138,10 @@ class SimulateResponse(BaseModel):
     system_config: SystemConfiguration
     electrical_analysis: ElectricalAnalysis
     cable_analysis: CableAnalysis
+    cable_section_analysis: CableSectionAnalysis
     protections: CableProtections
     energy_production: EnergyProduction
-    environmental_impact: object
+    environmental_impact: Dict
     autoconsumption_analysis: AutoconsumptionAnalysis
     economic_analysis: EconomicAnalysis
 

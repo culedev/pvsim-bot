@@ -145,6 +145,32 @@ async def simulate_pv_system(request: SimulateRequest):
             n_modules, module, inverter, weather_data
         )
         
+        # --- Cálculo eléctrico de strings ---
+        string_voltage_vmp = modules_per_string * module["v_mp"]
+        string_voltage_voc = modules_per_string * module["v_oc"]
+        array_current_imp = strings_parallel * module["i_mp"]
+        max_system_voltage = string_voltage_voc * 1.25
+
+        mppt_compatible = (inverter["mppt_min"] <= string_voltage_vmp <= inverter["mppt_max"])
+        
+        # --- Cálculo profesional de secciones según UNE ---
+        cable_section_results = analyze_cable_sections(
+            current_dc_a=array_current_imp,
+            length_dc_m=request.cable_length_dc_m,
+            v_dc=string_voltage_vmp,     # tensión de trabajo en DC
+            current_ac_a=inverter["ac_power"] * 1000 / 230,
+            length_ac_m=request.cable_length_ac_m,
+            v_ac=230,                    # tensión monofásica
+            method_dc="C", insulation_dc="PVC", n_cond_dc=2,   # ← valores típicos
+            method_ac="C", insulation_ac="PVC", n_cond_ac=2,
+            allowed_vdrop_pct=1.5,
+            material="Cu"
+        )
+        
+        # --- Usar secciones recomendadas para cálculo de pérdidas ---
+        recommended_dc_mm2 = cable_section_results['cable_dc']['recommended_section_mm2'] or 6
+        recommended_ac_mm2 = cable_section_results['cable_ac']['recommended_section_mm2'] or 10
+
         cable_results = calculate_cable_losses(
             modules_per_string=modules_per_string,
             strings_parallel=strings_parallel,
@@ -152,10 +178,13 @@ async def simulate_pv_system(request: SimulateRequest):
             module_i_mp=module["i_mp"],
             inverter_ac_power_kw=inverter["ac_power"],
             cable_length_dc_m=request.cable_length_dc_m,
-            cable_section_dc_mm2=request.cable_section_dc_mm2,
+            cable_section_dc_mm2=recommended_dc_mm2,
             cable_length_ac_m=request.cable_length_ac_m,
-            cable_section_ac_mm2=request.cable_section_ac_mm2
+            cable_section_ac_mm2=recommended_ac_mm2
         )
+
+        dc_cable_losses = cable_results['power_loss_dc_percent']
+        ac_cable_losses = cable_results['power_loss_ac_percent']
 
         # Actualizar totales según configuración eléctrica final
         final_kwp = total_modules_final * module["power_stc"] / 1000
@@ -168,8 +197,13 @@ async def simulate_pv_system(request: SimulateRequest):
             installation_tilt, installation_azimuth,
             modules_per_string, strings_parallel, module, inverter
         )
-        co2_avoided_kg_per_year = production_results['annual_production'] * FACTOR_CO2_GRID_KG_PER_KWH
-        logger.info(f"⚡️ Producción simulada: {production_results['annual_production']:.0f} kWh/año")
+        
+        total_cable_losses_pct = (dc_cable_losses + ac_cable_losses) / 100
+        adjusted_annual_production = production_results['annual_production'] * (1 - total_cable_losses_pct)
+        adjusted_hourly_production = production_results['hourly_production'] * (1 - total_cable_losses_pct)
+        
+        co2_avoided_kg_per_year = adjusted_annual_production * FACTOR_CO2_GRID_KG_PER_KWH
+        logger.info(f"⚡️ Producción simulada: {adjusted_annual_production:.0f} kWh/año")
         logger.info(f"⚡️ CO2 evitado: {co2_avoided_kg_per_year} kg CO2/kWh")
 
         # --- Perfil de consumo y autoconsumo ---
@@ -181,7 +215,7 @@ async def simulate_pv_system(request: SimulateRequest):
         consumption_profile = consumption_profile[~consumption_profile.index.duplicated(keep="first")]
 
         autoconsumption_results = analyze_autoconsumption(
-            production_results['hourly_production'], consumption_profile
+            adjusted_hourly_production, consumption_profile
         )
         enhanced_monthly_analysis = add_economic_analysis_to_monthly(
             autoconsumption_results['monthly_analysis'],
@@ -205,16 +239,6 @@ async def simulate_pv_system(request: SimulateRequest):
             f"VAN={economic_results['npv_25_years']:.0f} €, TIR={economic_results['irr_percent']:.2f}%, "
             f"LCOE={economic_results['lcoe_eur_kwh']:.3f} €/kWh (25 años)"
         )
-
-        # --- Cálculo eléctrico de strings ---
-        string_voltage_vmp = modules_per_string * module["v_mp"]
-        string_voltage_voc = modules_per_string * module["v_oc"]
-        array_current_imp = strings_parallel * module["i_mp"]
-        max_system_voltage = string_voltage_voc * 1.25
-
-        mppt_compatible = (inverter["mppt_min"] <= string_voltage_vmp <= inverter["mppt_max"])
-        dc_cable_losses = 1.5
-        ac_cable_losses = 1.0
 
         # --- Ensamblaje de respuesta final ---
         response = SimulateResponse(
@@ -263,27 +287,47 @@ async def simulate_pv_system(request: SimulateRequest):
                 dc_cable_losses_percent=dc_cable_losses,
                 ac_cable_losses_percent=ac_cable_losses
             ),
-            cable_analysis = CableAnalysis(
+            cable_analysis=CableAnalysis(
                 cable_length_dc_m=cable_results['cable_length_dc_m'],
                 cable_section_dc_mm2=cable_results['cable_section_dc_mm2'],
                 voltage_drop_dc_percent=cable_results['voltage_drop_dc_percent'],
                 power_loss_dc_percent=cable_results['power_loss_dc_percent'],
                 current_dc_a=cable_results['current_dc_a'],
-                recommended_dc_section_mm2=cable_results['recommended_dc_section_mm2'],
                 cable_length_ac_m=cable_results['cable_length_ac_m'],
                 cable_section_ac_mm2=cable_results['cable_section_ac_mm2'],
                 voltage_drop_ac_percent=cable_results['voltage_drop_ac_percent'],
                 power_loss_ac_percent=cable_results['power_loss_ac_percent'],
                 current_ac_a=cable_results['current_ac_a'],
-                recommended_ac_section_mm2=cable_results['recommended_ac_section_mm2'],
                 note=cable_results['note']
+            ),
+            cable_section_analysis=CableSectionAnalysis(
+                cable_dc=CableDetail(
+                    chosen_section_mm2=cable_section_results['cable_dc']['recommended_section_mm2'],
+                    voltage_drop_pct=cable_section_results['cable_dc']['voltage_drop_pct'],
+                    ampacity_A=cable_section_results['cable_dc']['ampacity_A'],
+                    resistivity_ohm_km=None,
+                    material="Cu",
+                    meets_voltage_drop=cable_section_results['cable_dc']['meets_voltage_drop'],
+                    meets_ampacity=cable_section_results['cable_dc']['meets_ampacity'],
+                    reason=cable_section_results['cable_dc']['reason']
+                ),
+                cable_ac=CableDetail(
+                    chosen_section_mm2=cable_section_results['cable_ac']['recommended_section_mm2'],
+                    voltage_drop_pct=cable_section_results['cable_ac']['voltage_drop_pct'],
+                    ampacity_A=cable_section_results['cable_ac']['ampacity_A'],
+                    resistivity_ohm_km=None,
+                    material="Cu",
+                    meets_voltage_drop=cable_section_results['cable_ac']['meets_voltage_drop'],
+                    meets_ampacity=cable_section_results['cable_ac']['meets_ampacity'],
+                    reason=cable_section_results['cable_ac']['reason']
+                )
             ),
             protections=CableProtections(
                 recommended_fuse_dc_a=round(cable_results['current_dc_a'] * 1.25, 1),
                 recommended_breaker_ac_a=round(cable_results['current_ac_a'] * 1.25, 1)
             ),
             energy_production=EnergyProduction(
-                annual_production_kwh=round(production_results['annual_production'], 0),
+                annual_production_kwh=round(adjusted_annual_production, 0),
                 monthly_production=production_results['monthly_production'],
                 specific_yield_kwh_kwp=round(production_results['specific_yield'], 0),
                 performance_ratio=round(production_results['performance_ratio'], 3),

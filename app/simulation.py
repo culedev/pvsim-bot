@@ -14,7 +14,7 @@ import pandas as pd
 import numpy as np
 from fastapi import HTTPException
 from pvlib import location, modelchain, pvsystem, temperature, solarposition, irradiance
-from app.constants import PV_MODULES, INVERTERS, SYSTEM_LOSSES, SYSTEM_COSTS, TARGET_YEAR, LOCAL_TZ
+from app.constants import *
 from app.models import *
 
 import logging
@@ -558,8 +558,6 @@ def calculate_economics(system_kwp: float, annual_self_consumption: float,
         'lcoe_eur_kwh': lcoe
     }
 
-import math
-
 def calculate_cable_losses(
     modules_per_string: int,
     strings_parallel: int,
@@ -567,9 +565,9 @@ def calculate_cable_losses(
     module_i_mp: float,
     inverter_ac_power_kw: float,
     cable_length_dc_m: float = 15.0,           # ← Por defecto: 15 m DC (ajustable según instalación)
-    cable_section_dc_mm2: int = 6,             # ← Por defecto: 6 mm² (muy habitual FV string)
+    cable_section_dc_mm2: int = None,             # ← Por defecto: 6 mm² (muy habitual FV string)
     cable_length_ac_m: float = 10.0,           # ← Por defecto: 10 m AC hasta cuadro/distribución
-    cable_section_ac_mm2: int = 10             # ← Por defecto: 10 mm² (instalación monofásica típica)
+    cable_section_ac_mm2: int = None             # ← Por defecto: 10 mm² (instalación monofásica típica)
 ) -> dict:
     """
     Calcula caída de tensión y pérdidas por calentamiento en cableado DC (campo FV) y AC (salida inversor).
@@ -614,29 +612,12 @@ def calculate_cable_losses(
     P_loss_ac = I_ac**2 * (cable_resistance_ac_ohm_per_km * cable_length_ac_m / 1000.0)
     P_nominal_ac = inverter_ac_power_kw * 1000
     P_loss_ac_percent = (P_loss_ac / P_nominal_ac * 100.0) if P_nominal_ac > 0 else 0
-
-    # --- Recomendación de sección por tabla si la caída > 1.5% (puedes ajustar el umbral) ---
-    recommended_dc_section = cable_section_dc_mm2
-    recommended_ac_section = cable_section_ac_mm2
-    for section in sorted(resistivity_table.keys()):
-        # DC
-        res_dc = resistivity_table[section]
-        vd_dc_test = 2 * cable_length_dc_m * I_dc_string * res_dc / 1000.0
-        if (vd_dc_test / (modules_per_string * module_v_mp) * 100.0) <= 1.5:
-            recommended_dc_section = section
-            break
-    for section in sorted(resistivity_table.keys()):
-        # AC
-        res_ac = resistivity_table[section]
-        vd_ac_test = 2 * cable_length_ac_m * I_ac * res_ac / 1000.0
-        if (vd_ac_test / 230.0 * 100.0) <= 1.5:
-            recommended_ac_section = section
-            break
         
     logger.info(
-        f"⚡️ [Cable] DC: {cable_length_dc_m}m x {cable_section_dc_mm2}mm² ({vd_percent_dc:.2f}% VD, {P_loss_dc_percent:.2f}% losses). "
-        f"AC: {cable_length_ac_m}m x {cable_section_ac_mm2}mm² ({vd_percent_ac:.2f}% VD, {P_loss_ac_percent:.2f}% losses). "
-        f"Recommended sections: DC={recommended_dc_section}mm², AC={recommended_ac_section}mm²."
+        f"⚡️ [Cable] DC {cable_length_dc_m} m × {cable_section_dc_mm2} mm² "
+        f"→ ΔV={vd_percent_dc:.2f}%  P_loss={P_loss_dc_percent:.2f}%.  "
+        f"AC {cable_length_ac_m} m x {cable_section_ac_mm2} mm² "
+        f"→ ΔV={vd_percent_ac:.2f}%  P_loss={P_loss_ac_percent:.2f}%."
     )
     return {
         "cable_length_dc_m": cable_length_dc_m,
@@ -644,12 +625,106 @@ def calculate_cable_losses(
         "voltage_drop_dc_percent": round(vd_percent_dc, 2),
         "power_loss_dc_percent": round(P_loss_dc_percent, 2),
         "current_dc_a": round(I_dc_total, 2),
-        "recommended_dc_section_mm2": recommended_dc_section,
         "cable_length_ac_m": cable_length_ac_m,
         "cable_section_ac_mm2": cable_section_ac_mm2,
         "voltage_drop_ac_percent": round(vd_percent_ac, 2),
         "power_loss_ac_percent": round(P_loss_ac_percent, 2),
         "current_ac_a": round(I_ac, 2),
-        "recommended_ac_section_mm2": recommended_ac_section,
-        "note": "Default values: DC=6mm²/15m, AC=10mm²/10m. Adjust according to your case and local regulations (recommended voltage drop ≤1.5% per segment)."
+        "note": (
+            "Default values: DC 6 mm²/15 m, AC 10 mm²/10 m. "
+            "Adjust according to your case and local regulations "
+            "(recommended voltage drop ≤ 1.5 % per segment)."
+        ),    
+    }
+
+def calculate_professional_cable_section(
+    current_a: float,
+    allowed_voltage_drop_pct: float,
+    length_m: float,
+    nominal_voltage_v: float,
+    method: str,
+    insulation: str,
+    n_conductors: int,
+    material: str = 'Cu'
+) -> dict:
+    """
+    Calcula la sección mínima de cable cumpliendo la UNE tanto por caída de tensión como por intensidad máxima.
+    Devuelve sección recomendada, caída de tensión, intensidad admisible y motivo.
+    """
+    reasons = []
+    resistivity = RESISTIVITY[material]
+    for section in STANDARD_SECTIONS_MM2:
+        # Buscar intensidad máxima según UNE
+        ampacity = CABLE_AMPACITY_TABLE.get((method, insulation, n_conductors), {}).get(section)
+        if not ampacity:
+            continue
+        # Cálculo caída de tensión (ida y vuelta)
+        voltage_drop_v = 2 * length_m * current_a * resistivity / section
+        voltage_drop_pct = voltage_drop_v / nominal_voltage_v * 100
+        meets_voltage_drop = voltage_drop_pct <= allowed_voltage_drop_pct
+        meets_ampacity = current_a <= ampacity
+        logger.info(
+            f"[Cable] {section}mm²: caída de tensión={voltage_drop_pct:.2f}% ({meets_voltage_drop}), "
+            f"intensidad admisible={ampacity}A ({meets_ampacity})"
+        )
+        if meets_voltage_drop and meets_ampacity:
+            return {
+                "recommended_section_mm2": section,
+                "voltage_drop_pct": round(voltage_drop_pct, 2),
+                "ampacity_A": ampacity,
+                "meets_voltage_drop": meets_voltage_drop,
+                "meets_ampacity": meets_ampacity,
+                "reason": "Cumple caída de tensión y UNE ampacidad",
+            }
+        if not meets_voltage_drop:
+            reasons.append(f"{section}mm² no cumple caída de tensión ({voltage_drop_pct:.2f}% > {allowed_voltage_drop_pct}%)")
+        if not meets_ampacity:
+            reasons.append(f"{section}mm² no cumple intensidad ({current_a:.2f}A > {ampacity}A)")
+    return {
+        "recommended_section_mm2": None,
+        "voltage_drop_pct": None,
+        "ampacity_A": None,
+        "meets_voltage_drop": False,
+        "meets_ampacity": False,
+        "reason": "; ".join(reasons)
+    }
+
+
+def analyze_cable_sections(
+    current_dc_a, length_dc_m, v_dc,
+    current_ac_a, length_ac_m, v_ac,
+    method_dc, insulation_dc, n_cond_dc,
+    method_ac, insulation_ac, n_cond_ac,
+    allowed_vdrop_pct=1.5, material='Cu'
+):
+    """
+    Analiza y selecciona la mejor sección de cable tanto en DC como en AC cumpliendo UNE y caída de tensión.
+    """
+    dc_result = calculate_professional_cable_section(
+        current_a=current_dc_a,
+        allowed_voltage_drop_pct=allowed_vdrop_pct,
+        length_m=length_dc_m,
+        nominal_voltage_v=v_dc,
+        method=method_dc,
+        insulation=insulation_dc,
+        n_conductors=n_cond_dc,
+        material=material
+    )
+    ac_result = calculate_professional_cable_section(
+        current_a=current_ac_a,
+        allowed_voltage_drop_pct=allowed_vdrop_pct,
+        length_m=length_ac_m,
+        nominal_voltage_v=v_ac,
+        method=method_ac,
+        insulation=insulation_ac,
+        n_conductors=n_cond_ac,
+        material=material
+    )
+    logger.info(
+        f"⚡ Resultado DC: sección recomendada={dc_result['recommended_section_mm2']}mm² | "
+        f"⚡ Resultado AC: sección recomendada={ac_result['recommended_section_mm2']}mm²"
+    )
+    return {
+        "cable_dc": dc_result,
+        "cable_ac": ac_result
     }
