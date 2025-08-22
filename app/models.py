@@ -14,7 +14,7 @@ class SimulateRequest(BaseModel):
     installation_type: Optional[str] = Field("optimal", description="Tipo: 'optimal', 'coplanar', 'fixed'")
     coverage_percentage: Optional[float] = Field(85, ge=30, le=120, description="Porcentaje de consumo a cubrir")
     shading_factor: Optional[float] = Field(0.95, ge=0.7, le=1.0, description="Factor de sombreado")
-    electricity_price: Optional[float] = Field(0.28, gt=0, description="Precio electricidad €/kWh")
+    electricity_price: Optional[float] = Field(0.20, gt=0, description="Precio electricidad €/kWh")
     surplus_price: Optional[float] = Field(0.055, gt=0, description="Precio compensación excedentes €/kWh")
     cable_length_dc_m: float = Field(15, gt=0, description="Longitud del cable DC en metros (por defecto 15m)")
     cable_section_dc_mm2: float = Field(6, gt=0, description="Sección del cable DC en mm² (por defecto 6mm²)")
@@ -144,6 +144,9 @@ class SimulateResponse(BaseModel):
     environmental_impact: Dict
     autoconsumption_analysis: AutoconsumptionAnalysis
     economic_analysis: EconomicAnalysis
+    inputs: Dict
+    hourly_production_ac_kwh: Optional[List[float]] = None
+    hourly_consumption_kwh: Optional[List[float]] = None
 
 class SolarApiData(BaseModel):
     """Datos obtenidos de Google Solar API"""

@@ -239,16 +239,35 @@ async def simulate_pv_system(request: SimulateRequest):
             f"VAN={economic_results['npv_25_years']:.0f} €, TIR={economic_results['irr_percent']:.2f}%, "
             f"LCOE={economic_results['lcoe_eur_kwh']:.3f} €/kWh (25 años)"
         )
+        
+        location_info = {
+            "latitude": lat,
+            "longitude": lon,
+            "timezone": "Europe/Madrid",
+            "data_source": data_source,
+            "calculation_date": datetime.now().isoformat()
+        }
+        if request.address:
+            location_info["address"] = request.address
+            
+        inputs_block = {
+            "annual_consumption_kwh": request.annual_consumption_kwh,
+            "coverage_percentage": request.coverage_percentage,
+            "roof_area_m2": request.roof_area_m2,
+            "roof_tilt": request.roof_tilt,
+            "roof_azimuth": request.roof_azimuth,
+            "installation_type": request.installation_type,
+            "electricity_price": request.electricity_price,
+            "surplus_price": request.surplus_price
+        }
+        
+        # Series horarias para CSV/Sheet
+        hourly_production_list = [round(float(x), 6) for x in adjusted_hourly_production.values]
+        hourly_consumption_list = [round(float(x), 6) for x in consumption_profile.reindex(adjusted_hourly_production.index).values]
 
         # --- Ensamblaje de respuesta final ---
         response = SimulateResponse(
-            location_info={
-                "latitude": lat,
-                "longitude": lon,
-                "timezone": "Europe/Madrid",
-                "data_source": data_source,
-                "calculation_date": datetime.now().isoformat()
-            },
+            location_info=location_info,
             geometry_analysis=GeometryAnalysis(
                 optimal_tilt=optimal_tilt,
                 optimal_azimuth=optimal_azimuth,
@@ -354,7 +373,10 @@ async def simulate_pv_system(request: SimulateRequest):
                 npv_25_years_eur=round(economic_results['npv_25_years'], 0),
                 irr_percent=round(economic_results['irr_percent'], 1),
                 lcoe_eur_kwh=round(economic_results['lcoe_eur_kwh'], 3)
-            )
+            ),
+            inputs=inputs_block,
+            hourly_production_ac_kwh=hourly_production_list,
+            hourly_consumption_kwh=hourly_consumption_list
         )
 
         if solar_api_data:
