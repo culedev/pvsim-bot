@@ -1,12 +1,14 @@
 version: "3.9"
 services:
   api:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: pv-sim
     restart: unless-stopped
     ports:
       - "127.0.0.1:8000:8000"
     environment:
-      TZ: Europe/Madrid
+      TZ: ${TZ:-Europe/Madrid}
       API_KEY: ${API_KEY}
       GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY}
