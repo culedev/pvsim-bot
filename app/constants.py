@@ -94,3 +94,4 @@ FACTOR_CO2_GRID_KG_PER_KWH = 0.28
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 SOLAR_API_BASE_URL = "https://solar.googleapis.com/v1"
 GEOCODING_API_URL = "https://maps.googleapis.com/maps/api/geocode/json"
+APPS_SCRIPT_WEBAPP_URL = os.getenv("APPS_SCRIPT_WEBAPP_URL")

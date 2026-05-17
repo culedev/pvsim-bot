@@ -4,16 +4,75 @@ import requests
 from pvlib import location, modelchain, pvsystem, temperature, solarposition, irradiance
 import traceback
 import math
+import aiohttp
 from app.models import *
 from app.simulation import *
 from app.geocoding import geocode_address
 from app.solar_api import get_building_insights, select_best_roof_segment
-from app.constants import GOOGLE_MAPS_API_KEY, PV_MODULES, INVERTERS, FACTOR_CO2_GRID_KG_PER_KWH
+from app.constants import (
+    GOOGLE_MAPS_API_KEY,
+    PV_MODULES,
+    INVERTERS,
+    FACTOR_CO2_GRID_KG_PER_KWH,
+    APPS_SCRIPT_WEBAPP_URL,
+)
 
 import logging
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+async def call_google_apps_script_report(payload: dict) -> dict:
+    """
+    Envía el JSON de simulación al Web App de Google Apps Script
+    para generar Google Sheet, Google Doc, CSV y PDF.
+    """
+    if not APPS_SCRIPT_WEBAPP_URL:
+        raise HTTPException(
+            status_code=500,
+            detail="APPS_SCRIPT_WEBAPP_URL no está configurada en el entorno"
+        )
+
+    timeout = aiohttp.ClientTimeout(total=180)
+
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(
+                APPS_SCRIPT_WEBAPP_URL,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+            ) as response:
+                text = await response.text()
+
+                if response.status >= 400:
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"Google Apps Script respondió con HTTP {response.status}: {text}"
+                    )
+
+                try:
+                    result = await response.json(content_type=None)
+                except Exception:
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"Google Apps Script no devolvió JSON válido: {text}"
+                    )
+
+                if not result.get("success"):
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"Error generando documentos: {result.get('error', 'Error desconocido')}"
+                    )
+
+                return result
+
+    except HTTPException:
+        raise
+    except aiohttp.ClientError as e:
+        raise HTTPException(
+            status_code=502,
+            detail=f"No se pudo conectar con Google Apps Script: {str(e)}"
+        )
 
 @router.get("/")
 async def root():
@@ -429,6 +488,32 @@ async def simulate_pv_system(request: SimulateRequest):
         logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
+@router.post("/simulate-and-report")
+async def simulate_pv_system_and_generate_report(request: SimulateRequest):
+    """
+    Ejecuta la simulación fotovoltaica y envía el resultado a Google Apps Script
+    para generar automáticamente los documentos del proyecto.
+    """
+    simulation_response = await simulate_pv_system(request)
+
+    if hasattr(simulation_response, "model_dump"):
+        simulation_payload = simulation_response.model_dump()
+    else:
+        simulation_payload = simulation_response.dict()
+
+    report_result = await call_google_apps_script_report(simulation_payload)
+
+    return {
+        "success": True,
+        "simulation": simulation_payload,
+        "report": {
+            "folder_url": report_result.get("folder_url"),
+            "sheet_url": report_result.get("sheet_url"),
+            "doc_url": report_result.get("doc_url"),
+            "csv_url": report_result.get("csv_url"),
+            "pdf_url": report_result.get("pdf_url"),
+        }
+    }
 # ======================== ENDPOINTS ADICIONALES ========================
 
 @router.get("/health")
