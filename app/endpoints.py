@@ -195,13 +195,28 @@ async def simulate_pv_system(request: SimulateRequest):
         production_results = calculate_pv_production(
             weather_data, lat, lon,
             installation_tilt, installation_azimuth,
-            modules_per_string, strings_parallel, module, inverter
+            modules_per_string, strings_parallel, module, inverter, shading_factor=request.shading_factor
         )
         
         total_cable_losses_pct = (dc_cable_losses + ac_cable_losses) / 100
         adjusted_annual_production = production_results['annual_production'] * (1 - total_cable_losses_pct)
         adjusted_hourly_production = production_results['hourly_production'] * (1 - total_cable_losses_pct)
-        
+
+        adjusted_monthly_production = []
+        for month in range(1, 13):
+            month_mask = adjusted_hourly_production.index.month == month
+            adjusted_monthly_production.append(
+                round(float(adjusted_hourly_production[month_mask].sum()), 1)
+            )
+
+        adjusted_specific_yield = adjusted_annual_production / final_kwp if final_kwp > 0 else 0
+        adjusted_capacity_factor = adjusted_annual_production / (final_kwp * 8760) * 100 if final_kwp > 0 else 0
+        adjusted_max_power_kw = round(float(adjusted_hourly_production.max()), 2)
+
+        # El PR original venía calculado antes de pérdidas de cableado.
+        # Se ajusta con el mismo factor de pérdidas de cableado para mantener coherencia.
+
+        adjusted_performance_ratio = production_results['performance_ratio'] * (1 - total_cable_losses_pct)
         co2_avoided_kg_per_year = adjusted_annual_production * FACTOR_CO2_GRID_KG_PER_KWH
         logger.info(f"⚡️ Producción simulada: {adjusted_annual_production:.0f} kWh/año")
         logger.info(f"⚡️ CO2 evitado: {co2_avoided_kg_per_year} kg CO2/kWh")
@@ -214,8 +229,23 @@ async def simulate_pv_system(request: SimulateRequest):
         )
         consumption_profile = consumption_profile[~consumption_profile.index.duplicated(keep="first")]
 
+        consumption_profile_aligned = consumption_profile.reindex(
+            adjusted_hourly_production.index
+        )
+
+        consumption_profile_aligned = consumption_profile_aligned.fillna(
+            consumption_profile.mean()
+        )
+        if consumption_profile_aligned.sum() > 0:
+            consumption_profile_aligned = (
+                consumption_profile_aligned
+                * request.annual_consumption_kwh
+                / consumption_profile_aligned.sum()
+            )
+
         autoconsumption_results = analyze_autoconsumption(
-            adjusted_hourly_production, consumption_profile
+            adjusted_hourly_production,
+            consumption_profile_aligned
         )
         enhanced_monthly_analysis = add_economic_analysis_to_monthly(
             autoconsumption_results['monthly_analysis'],
@@ -263,8 +293,10 @@ async def simulate_pv_system(request: SimulateRequest):
         
         # Series horarias para CSV/Sheet
         hourly_production_list = [round(float(x), 6) for x in adjusted_hourly_production.values]
-        hourly_consumption_list = [round(float(x), 6) for x in consumption_profile.reindex(adjusted_hourly_production.index).values]
-
+        hourly_consumption_list = [
+            round(float(x), 6)
+            for x in consumption_profile_aligned.values
+        ]
         # --- Ensamblaje de respuesta final ---
         response = SimulateResponse(
             location_info=location_info,
@@ -295,7 +327,7 @@ async def simulate_pv_system(request: SimulateRequest):
                 strings_parallel=strings_parallel,
                 total_power_kwp=round(final_kwp, 2),
                 total_area_m2=round(final_area, 1),
-                array_configuration=f"{strings_parallel}S × {modules_per_string}P"
+                array_configuration=f"{modules_per_string}S{strings_parallel}P"
             ),
             electrical_analysis=ElectricalAnalysis(
                 string_voltage_vmp_v=round(string_voltage_vmp, 1),
@@ -347,11 +379,11 @@ async def simulate_pv_system(request: SimulateRequest):
             ),
             energy_production=EnergyProduction(
                 annual_production_kwh=round(adjusted_annual_production, 0),
-                monthly_production=production_results['monthly_production'],
-                specific_yield_kwh_kwp=round(production_results['specific_yield'], 0),
-                performance_ratio=round(production_results['performance_ratio'], 3),
-                capacity_factor_percent=round(production_results['capacity_factor'], 1),
-                max_power_kw=production_results['max_power_kw']
+                monthly_production=adjusted_monthly_production,
+                specific_yield_kwh_kwp=round(adjusted_specific_yield, 0),
+                performance_ratio=round(adjusted_performance_ratio, 3),
+                capacity_factor_percent=round(adjusted_capacity_factor, 1),
+                max_power_kw=adjusted_max_power_kw
             ),
             environmental_impact={
                 "co2_avoided_kg_per_year": round(co2_avoided_kg_per_year, 1),

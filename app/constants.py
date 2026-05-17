@@ -4,18 +4,18 @@ import os
 PV_MODULES = {
     "ja_solar_545": {
         "model": "JA Solar JAM72S30-545/MR",
-        "power_stc": 545,  # W
-        "area_m2": 2.172,
-        "efficiency": 25.1,  # %
-        "v_mp": 41.85,  # V
-        "i_mp": 13.02,  # A
-        "v_oc": 50.15,  # V
-        "i_sc": 13.85,  # A
-        "temp_coef_power": -0.34,  # %/°C
-        "temp_coef_vmp": -0.30,   # %/°C - Coeficiente Vmp
-        "temp_coef_voc": -0.135,  # V/°C
-        "temp_coef_isc": 0.06,    # %/°C
-        "noct": 45,  # °C
+        "power_stc": 545,          # W
+        "area_m2": 2.587,          # m² = 2.279 m × 1.135 m
+        "efficiency": 21.1,        # %
+        "v_mp": 42.38,             # V
+        "i_mp": 12.86,             # A
+        "v_oc": 50.01,             # V
+        "i_sc": 13.62,             # A
+        "temp_coef_power": -0.350, # %/°C
+        "temp_coef_vmp": -0.30,    # %/°C
+        "temp_coef_voc": -0.275,   # %/°C
+        "temp_coef_isc": 0.045,    # %/°C
+        "noct": 45,                # °C
         "cells_in_series": 144
     }
 }

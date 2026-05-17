@@ -207,7 +207,9 @@ def calculate_string_configuration(n_modules: int, module: dict, inverter: dict,
     t_cell_max = t_air_max + (module['noct'] - 20) * 0.8
 
     v_mp_hot = module['v_mp'] * (1 + module['temp_coef_vmp']/100 * (t_cell_max - 25))
-    v_oc_cold = module['v_oc'] * (1 + module['temp_coef_voc']/100 * (t_air_min - 25))
+    v_oc_cold = module["v_oc"] * (
+        1 + module["temp_coef_voc"] / 100 * (t_air_min - 25)
+    )
 
     min_modules_string = max(2, int(inverter["mppt_min"] / v_mp_hot * 1.1))
     max_modules_string = int(inverter["mppt_max"] / v_oc_cold * 0.9)
@@ -247,7 +249,7 @@ def calculate_string_configuration(n_modules: int, module: dict, inverter: dict,
 
 def calculate_pv_production(weather_data: pd.DataFrame, lat: float, lon: float,
                            tilt: float, azimuth: float, modules_per_string: int,
-                           strings_parallel: int, module: dict, inverter: dict) -> dict:
+                           strings_parallel: int, module: dict, inverter: dict, shading_factor: float = 1.0) -> dict:
     """
     Simula la producción anual, mensual y horaria del sistema FV usando pvlib y aplica pérdidas realistas.
     Calcula además el rendimiento del sistema (PR y Capacity Factor).
@@ -265,10 +267,14 @@ def calculate_pv_production(weather_data: pd.DataFrame, lat: float, lon: float,
             'gamma_pdc': module['temp_coef_power'] / 100,
             'cells_in_series': module['cells_in_series']
         }
+        eta_inv = inverter['efficiency'] / 100
+        inverter_ac_power_w = inverter['ac_power'] * 1000
+
         inverter_params = {
-            'pdc0': strings_parallel * modules_per_string * module['power_stc'],
-            'eta_inv_nom': inverter['efficiency'] / 100,
-            'eta_inv_ref': inverter['efficiency'] / 100
+            # En PVWatts, pdc0 representa la potencia DC de entrada asociada a la potencia nominal AC del inversor.
+            'pdc0': inverter_ac_power_w / eta_inv,
+            'eta_inv_nom': eta_inv,
+            'eta_inv_ref': eta_inv
         }
         temperature_params = {'u0': 25.0, 'u1': 6.84}
         array = pvsystem.Array(
@@ -292,8 +298,10 @@ def calculate_pv_production(weather_data: pd.DataFrame, lat: float, lon: float,
         total_loss_factor = 1.0
         for loss_name, loss_value in SYSTEM_LOSSES.items():
             if loss_name not in ['temperature', 'irradiance', 'inverter']:
-                total_loss_factor *= (1 - loss_value)
+                total_loss_factor *= (1 - loss_value)            
+        total_loss_factor *= shading_factor
         ac_power_with_losses = mc.results.ac * total_loss_factor
+        ac_power_with_losses = ac_power_with_losses.clip(lower=0, upper=inverter_ac_power_w)
         production_hourly = ac_power_with_losses / 1000
         production_hourly = production_hourly[~production_hourly.index.duplicated(keep="first")]
         max_power_kw = production_hourly.max() 
@@ -631,10 +639,11 @@ def calculate_cable_losses(
         "power_loss_ac_percent": round(P_loss_ac_percent, 2),
         "current_ac_a": round(I_ac, 2),
         "note": (
-            "Default values: DC 6 mm²/15 m, AC 10 mm²/10 m. "
-            "Adjust according to your case and local regulations "
-            "(recommended voltage drop ≤ 1.5 % per segment)."
-        ),    
+            "Secciones calculadas automáticamente según caída de tensión e intensidad admisible. "
+            "Para proyecto de ejecución deben verificarse según REBT, UNE aplicable, "
+            "temperatura ambiente, agrupamiento, método de instalación y protecciones. "
+            "Criterio aplicado: caída de tensión recomendada ≤ 1.5 % por tramo."
+        ),  
     }
 
 def calculate_professional_cable_section(
