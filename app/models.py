@@ -55,10 +55,30 @@ class SystemConfiguration(BaseModel):
 
 class ElectricalAnalysis(BaseModel):
     string_voltage_vmp_v: float
-    string_voltage_voc_v: float
+
+    string_voltage_voc_stc_v: float
+    string_voltage_voc_cold_v: float
+    inverter_max_dc_voltage_v: float
+    dc_voltage_compatible: bool
+
     array_current_imp_a: float
-    max_system_voltage_v: float
-    mppt_compatibility: bool
+    array_current_isc_stc_a: float
+    array_current_isc_corrected_a: float
+
+    current_imp_per_mppt_a: float
+    current_isc_per_mppt_a: float
+    inverter_max_input_current_per_mppt_a: float
+    inverter_max_short_circuit_current_per_mppt_a: float
+
+    mppt_voltage_compatible: bool
+    mppt_current_compatible: bool
+    mppt_short_circuit_current_compatible: bool
+    dc_input_compatible: bool
+
+    mppt_count: int
+    strings_per_mppt: int
+    strings_per_mppt_used: int
+
     dc_cable_losses_percent: float
     ac_cable_losses_percent: float
 

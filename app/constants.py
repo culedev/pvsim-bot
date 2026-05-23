@@ -22,13 +22,111 @@ PV_MODULES = {
 
 # Base de datos de inversores
 INVERTERS = {
-    3.0: {"model": "Huawei SUN2000-3KTL-L1", "efficiency": 98.3, "mppt_min": 90, "mppt_max": 560, "max_dc": 4.5},
-    5.0: {"model": "Huawei SUN2000-5KTL-L1", "efficiency": 98.4, "mppt_min": 90, "mppt_max": 560, "max_dc": 7.5},
-    6.0: {"model": "Huawei SUN2000-6KTL-L1", "efficiency": 98.4, "mppt_min": 90, "mppt_max": 560, "max_dc": 9.0},
-    8.0: {"model": "Huawei SUN2000-8KTL", "efficiency": 98.5, "mppt_min": 200, "mppt_max": 950, "max_dc": 12.0},
-    10.0: {"model": "Huawei SUN2000-10KTL-L1", "efficiency": 98.3, "mppt_min": 90, "mppt_max": 560, "max_dc": 15.0},
-    12.0: {"model": "Huawei SUN2000-12KTL", "efficiency": 98.5, "mppt_min": 200, "mppt_max": 950, "max_dc": 18.0},
-    15.0: {"model": "Huawei SUN2000-15KTL", "efficiency": 98.6, "mppt_min": 200, "mppt_max": 950, "max_dc": 22.5}
+    3.0: {
+        "model": "Huawei SUN2000-3KTL-L1",
+        "efficiency": 98.3,
+        "mppt_min": 90,
+        "mppt_max": 560,
+        "max_dc": 4.5,
+        "recommended_max_pv_power_kw": 4.5,
+        "max_dc_voltage_v": 600,
+        "max_input_current_per_mppt_a": 12.5,
+        "max_short_circuit_current_per_mppt_a": 18.0,
+        "mppt_count": 2,
+        "strings_per_mppt": 1
+    },
+    3.1: {
+        "model": "GoodWe GW3000-DNS-30",
+        "efficiency": 97.9,
+        "mppt_min": 40,
+        "mppt_max": 560,
+        "max_dc": 4.5,
+        "recommended_max_pv_power_kw": 4.5,
+        "max_dc_voltage_v": 600,
+        "max_input_current_per_mppt_a": 16.0,
+        "max_short_circuit_current_per_mppt_a": 23.0,
+        "mppt_count": 2,
+        "strings_per_mppt": 1,
+        "nominal_ac_power_kw": 3.0
+    },
+    5.0: {
+        "model": "Huawei SUN2000-5KTL-L1",
+        "efficiency": 98.4,
+        "mppt_min": 90,
+        "mppt_max": 560,
+        "max_dc": 7.5,
+        "recommended_max_pv_power_kw": 7.5,
+        "max_dc_voltage_v": 600,
+        "max_input_current_per_mppt_a": 12.5,
+        "max_short_circuit_current_per_mppt_a": 18.0,
+        "mppt_count": 2,
+        "strings_per_mppt": 1
+    },
+    6.0: {
+        "model": "Huawei SUN2000-6KTL-L1",
+        "efficiency": 98.4,
+        "mppt_min": 90,
+        "mppt_max": 560,
+        "max_dc": 9.0,
+        "recommended_max_pv_power_kw": 9.0,
+        "max_dc_voltage_v": 600,
+        "max_input_current_per_mppt_a": 12.5,
+        "max_short_circuit_current_per_mppt_a": 18.0,
+        "mppt_count": 2,
+        "strings_per_mppt": 1
+    },
+    8.0: {
+        "model": "Huawei SUN2000-8KTL-M1",
+        "efficiency": 98.6,
+        "mppt_min": 140,
+        "mppt_max": 980,
+        "max_dc": 12.0,
+        "recommended_max_pv_power_kw": 12.0,
+        "max_dc_voltage_v": 1100,
+        "max_input_current_per_mppt_a": 11.0,
+        "max_short_circuit_current_per_mppt_a": 15.0,
+        "mppt_count": 2,
+        "strings_per_mppt": 1
+    },
+    10.0: {
+        "model": "Huawei SUN2000-10KTL-M1",
+        "efficiency": 98.6,
+        "mppt_min": 140,
+        "mppt_max": 980,
+        "max_dc": 15.0,
+        "recommended_max_pv_power_kw": 15.0,
+        "max_dc_voltage_v": 1100,
+        "max_input_current_per_mppt_a": 11.0,
+        "max_short_circuit_current_per_mppt_a": 15.0,
+        "mppt_count": 2,
+        "strings_per_mppt": 1
+    },
+    12.0: {
+        "model": "Huawei SUN2000-12KTL-M2",
+        "efficiency": 98.5,
+        "mppt_min": 160,
+        "mppt_max": 950,
+        "max_dc": 18.0,
+        "recommended_max_pv_power_kw": 18.0,
+        "max_dc_voltage_v": 1080,
+        "max_input_current_per_mppt_a": 22.0,
+        "max_short_circuit_current_per_mppt_a": 30.0,
+        "mppt_count": 2,
+        "strings_per_mppt": 2
+    },
+    15.0: {
+        "model": "Huawei SUN2000-15KTL-M2",
+        "efficiency": 98.65,
+        "mppt_min": 160,
+        "mppt_max": 950,
+        "max_dc": 22.5,
+        "recommended_max_pv_power_kw": 22.5,
+        "max_dc_voltage_v": 1080,
+        "max_input_current_per_mppt_a": 22.0,
+        "max_short_circuit_current_per_mppt_a": 30.0,
+        "mppt_count": 2,
+        "strings_per_mppt": 2
+    }
 }
 
 # Pérdidas del sistema (valores realistas)

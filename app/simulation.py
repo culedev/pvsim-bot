@@ -175,25 +175,68 @@ def calculate_system_size(annual_consumption: float, coverage_percent: float,
     logger.info(f"⚡️ Dimensionado: {n_modules} módulos seleccionados, {actual_kwp:.2f} kWp instalados, área total {total_area:.1f} m²")
     return n_modules, actual_kwp, total_area
 
-def select_inverter(kwp_dc: float) -> dict:
+def select_inverter(kwp_dc: float, module: dict | None = None) -> dict:
     """
-    Selecciona el inversor que mejor se adapta al campo fotovoltaico para un ratio DC/AC óptimo (1.2).
+    Selecciona el inversor que mejor se adapta al campo fotovoltaico para un ratio DC/AC objetivo,
+    descartando equipos incompatibles por potencia DC recomendada y corriente de entrada por MPPT.
     """
     target_ratio = 1.2
     best_inverter = None
     best_score = float('inf')
-    for ac_power, specs in INVERTERS.items():
+    rejected = []
+
+    for _, specs in INVERTERS.items():
+        ac_power = specs.get("nominal_ac_power_kw")
+
+        if ac_power is None:
+            # Compatibilidad con catálogo anterior, donde la clave era la potencia AC
+            ac_power = next(
+                key for key, value in INVERTERS.items()
+                if value is specs
+            )
+
         if kwp_dc > specs["max_dc"]:
+            rejected.append((specs["model"], "potencia DC superior a la recomendada"))
             continue
+
+        if module is not None:
+            module_imp = module["i_mp"]
+            module_isc = module["i_sc"]
+
+            if module_imp > specs["max_input_current_per_mppt_a"]:
+                rejected.append(
+                    (specs["model"], f"Imp módulo {module_imp:.2f} A > Imax MPPT {specs['max_input_current_per_mppt_a']:.2f} A")
+                )
+                continue
+
+            if module_isc > specs["max_short_circuit_current_per_mppt_a"]:
+                rejected.append(
+                    (specs["model"], f"Isc módulo {module_isc:.2f} A > Isc max MPPT {specs['max_short_circuit_current_per_mppt_a']:.2f} A")
+                )
+                continue
+
         ratio = kwp_dc / ac_power
         score = abs(ratio - target_ratio)
+
         if score < best_score:
             best_score = score
             best_inverter = {"ac_power": ac_power, **specs}
+
     if best_inverter is None:
-        ac_power = min(INVERTERS.keys())
-        best_inverter = {"ac_power": ac_power, **INVERTERS[ac_power]}
-    logger.info(f"⚡ Inversor seleccionado: {best_inverter['model']} ({best_inverter['ac_power']} kW, eficiencia {best_inverter['efficiency']}%)")
+        raise HTTPException(
+            status_code=422,
+            detail="No se encontró un inversor compatible con el campo fotovoltaico calculado."
+        )
+
+    if rejected:
+        for model, reason in rejected:
+            logger.info(f"⚠️ Inversor descartado: {model} | {reason}")
+
+    logger.info(
+        f"⚡ Inversor seleccionado: {best_inverter['model']} "
+        f"({best_inverter['ac_power']} kW, eficiencia {best_inverter['efficiency']}%)"
+    )
+
     return best_inverter
 
 def calculate_string_configuration(n_modules: int, module: dict, inverter: dict, 
@@ -244,8 +287,20 @@ def calculate_string_configuration(n_modules: int, module: dict, inverter: dict,
         best_config = (modules_per_string, strings_parallel, total_modules)
         logger.warning("⚠️  Configuración de emergencia aplicada: no se encontró combinación óptima.")
 
-    logger.info(f"⚡️ [Strings] Configuración elegida: {best_config[1]} strings × {best_config[0]} módulos/serie = {best_config[2]} módulos totales")
-    return best_config
+    logger.info(
+        f"⚡️ [Strings] Configuración elegida: {best_config[1]} strings × "
+        f"{best_config[0]} módulos/serie = {best_config[2]} módulos totales"
+    )
+
+    return {
+        "modules_per_string": best_config[0],
+        "strings_parallel": best_config[1],
+        "total_modules": best_config[2],
+        "t_air_min_design_c": round(t_air_min, 2),
+        "t_cell_max_c": round(t_cell_max, 2),
+        "v_mp_hot_module_v": round(v_mp_hot, 2),
+        "v_oc_cold_module_v": round(v_oc_cold, 2)
+    }
 
 def calculate_pv_production(weather_data: pd.DataFrame, lat: float, lon: float,
                            tilt: float, azimuth: float, modules_per_string: int,

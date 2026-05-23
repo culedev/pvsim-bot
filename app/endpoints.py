@@ -199,18 +199,53 @@ async def simulate_pv_system(request: SimulateRequest):
         )
         logger.info(f"⚡️ Dimensionado inicial: {n_modules} módulos, {system_kwp:.2f} kWp, {total_area:.1f} m²")
 
-        inverter = select_inverter(system_kwp)
-        modules_per_string, strings_parallel, total_modules_final = calculate_string_configuration(
+        inverter = select_inverter(system_kwp, module)
+        string_config = calculate_string_configuration(
             n_modules, module, inverter, weather_data
         )
+
+        modules_per_string = string_config["modules_per_string"]
+        strings_parallel = string_config["strings_parallel"]
+        total_modules_final = string_config["total_modules"]
         
         # --- Cálculo eléctrico de strings ---
         string_voltage_vmp = modules_per_string * module["v_mp"]
-        string_voltage_voc = modules_per_string * module["v_oc"]
-        array_current_imp = strings_parallel * module["i_mp"]
-        max_system_voltage = string_voltage_voc * 1.25
+        string_voltage_voc_stc = modules_per_string * module["v_oc"]
+        string_voltage_voc_cold = modules_per_string * string_config["v_oc_cold_module_v"]
 
-        mppt_compatible = (inverter["mppt_min"] <= string_voltage_vmp <= inverter["mppt_max"])
+        array_current_imp = strings_parallel * module["i_mp"]
+        array_current_isc_stc = strings_parallel * module["i_sc"]
+
+        # Corrección conservadora de Isc con temperatura de célula máxima.
+        # Isc aumenta ligeramente con la temperatura.
+        array_current_isc_corrected = strings_parallel * module["i_sc"] * (
+            1 + module["temp_coef_isc"] / 100 * (string_config["t_cell_max_c"] - 25)
+        )
+
+        strings_per_mppt_used = math.ceil(strings_parallel / inverter["mppt_count"])
+
+        current_imp_per_mppt = strings_per_mppt_used * module["i_mp"]
+        current_isc_per_mppt = strings_per_mppt_used * module["i_sc"] * (
+            1 + module["temp_coef_isc"] / 100 * (string_config["t_cell_max_c"] - 25)
+        )
+
+        mppt_voltage_compatible = inverter["mppt_min"] <= string_voltage_vmp <= inverter["mppt_max"]
+        dc_voltage_compatible = string_voltage_voc_cold <= inverter["max_dc_voltage_v"]
+
+        mppt_current_compatible = (
+            current_imp_per_mppt <= inverter["max_input_current_per_mppt_a"]
+        )
+
+        mppt_short_circuit_current_compatible = (
+            current_isc_per_mppt <= inverter["max_short_circuit_current_per_mppt_a"]
+        )
+
+        dc_input_compatible = (
+            mppt_voltage_compatible
+            and dc_voltage_compatible
+            and mppt_current_compatible
+            and mppt_short_circuit_current_compatible
+        )
         
         # --- Cálculo profesional de secciones según UNE ---
         cable_section_results = analyze_cable_sections(
@@ -390,10 +425,30 @@ async def simulate_pv_system(request: SimulateRequest):
             ),
             electrical_analysis=ElectricalAnalysis(
                 string_voltage_vmp_v=round(string_voltage_vmp, 1),
-                string_voltage_voc_v=round(string_voltage_voc, 1),
+
+                string_voltage_voc_stc_v=round(string_voltage_voc_stc, 1),
+                string_voltage_voc_cold_v=round(string_voltage_voc_cold, 1),
+                inverter_max_dc_voltage_v=round(inverter["max_dc_voltage_v"], 1),
+                dc_voltage_compatible=dc_voltage_compatible,
+
                 array_current_imp_a=round(array_current_imp, 1),
-                max_system_voltage_v=round(max_system_voltage, 1),
-                mppt_compatibility=mppt_compatible,
+                array_current_isc_stc_a=round(array_current_isc_stc, 1),
+                array_current_isc_corrected_a=round(array_current_isc_corrected, 1),
+
+                current_imp_per_mppt_a=round(current_imp_per_mppt, 1),
+                current_isc_per_mppt_a=round(current_isc_per_mppt, 1),
+                inverter_max_input_current_per_mppt_a=round(inverter["max_input_current_per_mppt_a"], 1),
+                inverter_max_short_circuit_current_per_mppt_a=round(inverter["max_short_circuit_current_per_mppt_a"], 1),
+
+                mppt_voltage_compatible=mppt_voltage_compatible,
+                mppt_current_compatible=mppt_current_compatible,
+                mppt_short_circuit_current_compatible=mppt_short_circuit_current_compatible,
+                dc_input_compatible=dc_input_compatible,
+
+                mppt_count=inverter["mppt_count"],
+                strings_per_mppt=inverter["strings_per_mppt"],
+                strings_per_mppt_used=strings_per_mppt_used,
+
                 dc_cable_losses_percent=dc_cable_losses,
                 ac_cable_losses_percent=ac_cable_losses
             ),
@@ -433,7 +488,7 @@ async def simulate_pv_system(request: SimulateRequest):
                 )
             ),
             protections=CableProtections(
-                recommended_fuse_dc_a=round(cable_results['current_dc_a'] * 1.25, 1),
+                recommended_fuse_dc_a=round(array_current_isc_corrected * 1.25, 1),
                 recommended_breaker_ac_a=round(cable_results['current_ac_a'] * 1.25, 1)
             ),
             energy_production=EnergyProduction(
