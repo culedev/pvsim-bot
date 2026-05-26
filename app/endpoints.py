@@ -18,6 +18,8 @@ from app.constants import (
     STANDARD_GPV_FUSES_A,
     STANDARD_AC_BREAKERS_A,
     MIN_RECOMMENDED_AC_SECTION_MM2,
+    CABLE_AMPACITY_TABLE,
+    MIN_RECOMMENDED_DC_SECTION_MM2
 )
 
 import logging
@@ -250,25 +252,49 @@ async def simulate_pv_system(request: SimulateRequest):
             and mppt_short_circuit_current_compatible
         )
         
+        if not dc_input_compatible:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "La configuración eléctrica calculada no es compatible con la entrada DC del inversor. "
+                    f"Imp/MPPT={current_imp_per_mppt:.2f} A, "
+                    f"Isc/MPPT={current_isc_per_mppt:.2f} A, "
+                    f"límite Imp={inverter['max_input_current_per_mppt_a']:.2f} A, "
+                    f"límite Isc={inverter['max_short_circuit_current_per_mppt_a']:.2f} A, "
+                    f"configuración={modules_per_string}S{strings_parallel}P"
+                )
+            )
+        
         # --- Cálculo profesional de secciones según UNE ---
         cable_section_results = analyze_cable_sections(
             current_dc_a=array_current_imp,
             length_dc_m=request.cable_length_dc_m,
-            v_dc=string_voltage_vmp,     # tensión de trabajo en DC
+            v_dc=string_voltage_vmp,
             current_ac_a=inverter["ac_power"] * 1000 / 230,
             length_ac_m=request.cable_length_ac_m,
-            v_ac=230,                    # tensión monofásica
-            method_dc="C", insulation_dc="PVC", n_cond_dc=2,   # ← valores típicos
+            v_ac=230,
+            method_dc="C", insulation_dc="PVC", n_cond_dc=2,
             method_ac="C", insulation_ac="PVC", n_cond_ac=2,
             allowed_vdrop_pct=1.5,
             material="Cu"
         )
-        
+
         # --- Usar secciones recomendadas para cálculo de pérdidas ---
-        recommended_dc_mm2 = cable_section_results['cable_dc']['recommended_section_mm2'] or 6
+        calculated_dc_mm2 = cable_section_results['cable_dc']['recommended_section_mm2'] or 6
+        recommended_dc_mm2 = max(calculated_dc_mm2, MIN_RECOMMENDED_DC_SECTION_MM2)
+
+        recommended_dc_ampacity_a = CABLE_AMPACITY_TABLE.get(
+            ("C", "PVC", 2),
+            {}
+        ).get(recommended_dc_mm2)
 
         calculated_ac_mm2 = cable_section_results['cable_ac']['recommended_section_mm2'] or 10
         recommended_ac_mm2 = max(calculated_ac_mm2, MIN_RECOMMENDED_AC_SECTION_MM2)
+
+        recommended_ac_ampacity_a = CABLE_AMPACITY_TABLE.get(
+            ("C", "PVC", 2),
+            {}
+        ).get(recommended_ac_mm2)
 
         cable_results = calculate_cable_losses(
             modules_per_string=modules_per_string,
@@ -398,8 +424,13 @@ async def simulate_pv_system(request: SimulateRequest):
         ]
         
         # --- Protección DC mediante fusible gPV ---
-        # Se toma como referencia la corriente de cortocircuito corregida, no la corriente de operación.
-        dc_fuse_min_a = array_current_isc_corrected * 1.25
+        # Se toma como referencia la corriente de cortocircuito corregida por string,
+        # no la corriente total del campo FV.
+        string_isc_corrected = module["i_sc"] * (
+            1 + module["temp_coef_isc"] / 100 * (string_config["t_cell_max_c"] - 25)
+        )
+
+        dc_fuse_min_a = string_isc_corrected * 1.25
         module_max_series_fuse_a = module.get("maximum_series_fuse_rating_a")
 
         recommended_fuse_dc_a = next(
@@ -518,9 +549,9 @@ async def simulate_pv_system(request: SimulateRequest):
             ),
             cable_section_analysis=CableSectionAnalysis(
                 cable_dc=CableDetail(
-                    chosen_section_mm2=cable_section_results['cable_dc']['recommended_section_mm2'],
+                    chosen_section_mm2=recommended_dc_mm2,
                     voltage_drop_pct=cable_section_results['cable_dc']['voltage_drop_pct'],
-                    ampacity_A=cable_section_results['cable_dc']['ampacity_A'],
+                    ampacity_A=recommended_dc_ampacity_a,
                     resistivity_ohm_km=None,
                     material="Cu",
                     meets_voltage_drop=cable_section_results['cable_dc']['meets_voltage_drop'],
@@ -530,7 +561,7 @@ async def simulate_pv_system(request: SimulateRequest):
                 cable_ac=CableDetail(
                 chosen_section_mm2=recommended_ac_mm2,
                 voltage_drop_pct=cable_section_results['cable_ac']['voltage_drop_pct'],
-                ampacity_A=cable_section_results['cable_ac']['ampacity_A'],
+                ampacity_A=recommended_ac_ampacity_a,
                 resistivity_ohm_km=None,
                 material="Cu",
                 meets_voltage_drop=cable_section_results['cable_ac']['meets_voltage_drop'],

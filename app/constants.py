@@ -149,7 +149,7 @@ SYSTEM_COSTS = {
     "cost_per_wp": 1.4,       # €/Wp instalado
     "maintenance_annual": 20, # €/kWp/año
     "insurance_annual": 8,    # €/kWp/año
-    "degradation_annual": 0.007  # 0.5%/año
+    "degradation_annual": 0.007  # 0.7%/año
 }
 
 # Tabla simplificada (puedes ampliar más si lo necesitas)
@@ -184,6 +184,7 @@ STANDARD_SECTIONS_MM2 = [1.5, 2.5, 4, 6, 10, 16, 25, 35, 50, 70, 95, 120, 150, 1
 STANDARD_GPV_FUSES_A = [10, 12, 15, 16, 20, 25, 32, 40, 50, 63]
 STANDARD_AC_BREAKERS_A = [6, 10, 16, 20, 25, 32, 40, 50, 63]
 MIN_RECOMMENDED_AC_SECTION_MM2 = 2.5
+MIN_RECOMMENDED_DC_SECTION_MM2 = 2.5
 
 RESISTIVITY = {
     'Cu': 0.01786,  # Ω·mm²/m (Copper)

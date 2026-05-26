@@ -10,6 +10,7 @@ pueda entender rápidamente los pasos clave, configuraciones adoptadas,
 alertas de diseño y el rendimiento esperado de la instalación.
 """
 
+import math
 import pandas as pd
 import numpy as np
 from fastapi import HTTPException
@@ -160,7 +161,7 @@ def calculate_system_size(annual_consumption: float, coverage_percent: float,
     target_energy = annual_consumption * (coverage_percent / 100)
     required_kwp = target_energy / specific_yield_estimate
     module_power_kw = module["power_stc"] / 1000
-    n_modules = max(1, round(required_kwp / module_power_kw))
+    n_modules = max(1, math.ceil(required_kwp / module_power_kw))
 
     # Comprobar si hay limitación por área
     if available_area:
@@ -277,8 +278,24 @@ def calculate_string_configuration(n_modules: int, module: dict, inverter: dict,
                 continue
             waste = abs(total_modules - n_modules)
             possible_configs.append((modules_per_string, strings_parallel, total_modules, waste))
+            strings_per_mppt_used = math.ceil(strings_parallel / inverter["mppt_count"])
+
+            if strings_per_mppt_used > inverter["strings_per_mppt"]:
+                continue
+
+            current_imp_per_mppt = strings_per_mppt_used * module["i_mp"]
+
+            current_isc_per_mppt = strings_per_mppt_used * module["i_sc"] * (
+                1 + module["temp_coef_isc"] / 100 * (t_cell_max - 25)
+            )
+
+            if current_imp_per_mppt > inverter["max_input_current_per_mppt_a"]:
+                continue
+
+            if current_isc_per_mppt > inverter["max_short_circuit_current_per_mppt_a"]:
+                continue
     if possible_configs:
-        possible_configs.sort(key=lambda x: x[3])
+        possible_configs.sort(key=lambda x: (x[3], x[1], -x[0]))
         best = possible_configs[0]
         best_config = (best[0], best[1], best[2])
     else:
@@ -643,12 +660,14 @@ def calculate_cable_losses(
     # --- Resistividad estándar para cobre (Ω/km) según sección ---
     # Tablas IEC 60228 (puedes ampliar según tus necesidades)
     resistivity_table = {
-        4:   4.61,    # Ω/km para 4 mm²
-        6:   3.08,    # Ω/km para 6 mm²
-        10:  1.83,    # Ω/km para 10 mm²
-        16:  1.15,    # Ω/km para 16 mm²
-        25:  0.727,   # Ω/km para 25 mm²
-        35:  0.524,   # Ω/km para 35 mm²
+        1.5: 12.1,    # Ω/km para 1,5 mm² Cu
+        2.5: 7.41,    # Ω/km para 2,5 mm² Cu
+        4:   4.61,    # Ω/km para 4 mm² Cu
+        6:   3.08,    # Ω/km para 6 mm² Cu
+        10:  1.83,    # Ω/km para 10 mm² Cu
+        16:  1.15,    # Ω/km para 16 mm² Cu
+        25:  0.727,   # Ω/km para 25 mm² Cu
+        35:  0.524,   # Ω/km para 35 mm² Cu
     }
     cable_resistance_dc_ohm_per_km = resistivity_table.get(cable_section_dc_mm2, 3.08)   # default: 6 mm²
     cable_resistance_ac_ohm_per_km = resistivity_table.get(cable_section_ac_mm2, 1.83)   # default: 10 mm²
