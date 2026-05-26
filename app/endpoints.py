@@ -15,6 +15,7 @@ from app.constants import (
     INVERTERS,
     FACTOR_CO2_GRID_KG_PER_KWH,
     APPS_SCRIPT_WEBAPP_URL,
+    STANDARD_GPV_FUSES_A,
 )
 
 import logging
@@ -391,6 +392,36 @@ async def simulate_pv_system(request: SimulateRequest):
             round(float(x), 6)
             for x in consumption_profile_aligned.values
         ]
+        
+        # --- Protección DC mediante fusible gPV ---
+        # Se toma como referencia la corriente de cortocircuito corregida, no la corriente de operación.
+        dc_fuse_min_a = array_current_isc_corrected * 1.25
+        module_max_series_fuse_a = module.get("maximum_series_fuse_rating_a")
+
+        recommended_fuse_dc_a = next(
+            (fuse for fuse in STANDARD_GPV_FUSES_A if fuse >= dc_fuse_min_a),
+            None
+        )
+
+        if recommended_fuse_dc_a is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"No existe fusible gPV comercial suficiente para la protección DC calculada. "
+                    f"Iprot,DC={dc_fuse_min_a:.2f} A"
+                )
+            )
+
+        if module_max_series_fuse_a is not None and recommended_fuse_dc_a > module_max_series_fuse_a:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"El fusible gPV seleccionado supera el maximum series fuse rating del módulo. "
+                    f"Iprot,DC={dc_fuse_min_a:.2f} A, "
+                    f"fusible seleccionado={recommended_fuse_dc_a} A, "
+                    f"límite del módulo={module_max_series_fuse_a} A"
+                )
+            )
         # --- Ensamblaje de respuesta final ---
         response = SimulateResponse(
             location_info=location_info,
@@ -488,7 +519,10 @@ async def simulate_pv_system(request: SimulateRequest):
                 )
             ),
             protections=CableProtections(
-                recommended_fuse_dc_a=round(array_current_isc_corrected * 1.25, 1),
+                calculated_fuse_dc_a=round(dc_fuse_min_a, 2),
+                recommended_fuse_dc_a=recommended_fuse_dc_a,
+                fuse_dc_type="gPV",
+                module_max_series_fuse_rating_a=module_max_series_fuse_a,
                 recommended_breaker_ac_a=round(cable_results['current_ac_a'] * 1.25, 1)
             ),
             energy_production=EnergyProduction(

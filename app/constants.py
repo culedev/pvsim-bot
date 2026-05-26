@@ -16,7 +16,8 @@ PV_MODULES = {
         "temp_coef_voc": -0.275,   # %/°C
         "temp_coef_isc": 0.045,    # %/°C
         "noct": 45,                # °C
-        "cells_in_series": 144
+        "cells_in_series": 144,
+        "maximum_series_fuse_rating_a": 25 # A
     }
 }
 
@@ -179,6 +180,8 @@ CABLE_AMPACITY_TABLE = {
     ('F', 'XLPE', 2): {1.5: 27, 2.5: 36, 4: 47, 6: 61, 10: 87, 16: 119, 25: 158, 35: 197},
 }
 STANDARD_SECTIONS_MM2 = [1.5, 2.5, 4, 6, 10, 16, 25, 35, 50, 70, 95, 120, 150, 185, 240, 300]
+
+STANDARD_GPV_FUSES_A = [10, 12, 15, 16, 20, 25, 32, 40, 50, 63]
 
 RESISTIVITY = {
     'Cu': 0.01786,  # Ω·mm²/m (Copper)

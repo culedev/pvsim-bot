@@ -147,7 +147,10 @@ class CableSectionAnalysis(BaseModel):
     cable_ac: CableDetail
 
 class CableProtections(BaseModel):
+    calculated_fuse_dc_a: float
     recommended_fuse_dc_a: float
+    fuse_dc_type: str
+    module_max_series_fuse_rating_a: Optional[float] = None
     recommended_breaker_ac_a: float
 
 # ---------- Respuesta de alto nivel ----------
