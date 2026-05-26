@@ -550,17 +550,22 @@ async def simulate_pv_system(request: SimulateRequest):
             cable_section_analysis=CableSectionAnalysis(
                 cable_dc=CableDetail(
                     chosen_section_mm2=recommended_dc_mm2,
-                    voltage_drop_pct=cable_section_results['cable_dc']['voltage_drop_pct'],
+                    voltage_drop_pct=cable_results['voltage_drop_dc_percent'],
                     ampacity_A=recommended_dc_ampacity_a,
                     resistivity_ohm_km=None,
                     material="Cu",
                     meets_voltage_drop=cable_section_results['cable_dc']['meets_voltage_drop'],
                     meets_ampacity=cable_section_results['cable_dc']['meets_ampacity'],
-                    reason=cable_section_results['cable_dc']['reason']
+                    reason=cable_section_results['cable_dc']['reason'],
+                    reason=(
+                    cable_section_results['cable_dc']['reason']
+                    if calculated_dc_mm2 >= MIN_RECOMMENDED_DC_SECTION_MM2
+                    else "Se adopta 2.5 mm² como sección mínima recomendada en DC para coordinar mejor con la protección gPV."
+                )
                 ),
                 cable_ac=CableDetail(
                 chosen_section_mm2=recommended_ac_mm2,
-                voltage_drop_pct=cable_section_results['cable_ac']['voltage_drop_pct'],
+                voltage_drop_pct=cable_results['voltage_drop_ac_percent'],
                 ampacity_A=recommended_ac_ampacity_a,
                 resistivity_ohm_km=None,
                 material="Cu",
