@@ -247,7 +247,8 @@ def calculate_string_configuration(n_modules: int, module: dict, inverter: dict,
     """
     t_air_min = weather_data['temp_air'].min() - 10  # Margen de seguridad 10°C
     t_air_max = weather_data['temp_air'].quantile(0.99)
-    t_cell_max = t_air_max + (module['noct'] - 20) * 0.8
+    design_irradiance_w_m2 = 1000
+    t_cell_max = t_air_max + ((module['noct'] - 20) / 800) * design_irradiance_w_m2
 
     v_mp_hot = module['v_mp'] * (1 + module['temp_coef_vmp']/100 * (t_cell_max - 25))
     v_oc_cold = module["v_oc"] * (

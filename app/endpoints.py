@@ -16,6 +16,8 @@ from app.constants import (
     FACTOR_CO2_GRID_KG_PER_KWH,
     APPS_SCRIPT_WEBAPP_URL,
     STANDARD_GPV_FUSES_A,
+    STANDARD_AC_BREAKERS_A,
+    MIN_RECOMMENDED_AC_SECTION_MM2,
 )
 
 import logging
@@ -264,7 +266,9 @@ async def simulate_pv_system(request: SimulateRequest):
         
         # --- Usar secciones recomendadas para cálculo de pérdidas ---
         recommended_dc_mm2 = cable_section_results['cable_dc']['recommended_section_mm2'] or 6
-        recommended_ac_mm2 = cable_section_results['cable_ac']['recommended_section_mm2'] or 10
+
+        calculated_ac_mm2 = cable_section_results['cable_ac']['recommended_section_mm2'] or 10
+        recommended_ac_mm2 = max(calculated_ac_mm2, MIN_RECOMMENDED_AC_SECTION_MM2)
 
         cable_results = calculate_cable_losses(
             modules_per_string=modules_per_string,
@@ -422,6 +426,22 @@ async def simulate_pv_system(request: SimulateRequest):
                     f"límite del módulo={module_max_series_fuse_a} A"
                 )
             )
+        # --- Protección AC mediante magnetotérmico comercial ---
+        ac_breaker_reference_a = cable_results['current_ac_a'] * 1.25
+
+        recommended_breaker_ac_a = next(
+            (breaker for breaker in STANDARD_AC_BREAKERS_A if breaker >= ac_breaker_reference_a),
+            None
+        )
+
+        if recommended_breaker_ac_a is None:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"No existe magnetotérmico AC comercial suficiente. "
+                    f"Iprot,AC={ac_breaker_reference_a:.2f} A"
+                )
+            )
         # --- Ensamblaje de respuesta final ---
         response = SimulateResponse(
             location_info=location_info,
@@ -508,14 +528,18 @@ async def simulate_pv_system(request: SimulateRequest):
                     reason=cable_section_results['cable_dc']['reason']
                 ),
                 cable_ac=CableDetail(
-                    chosen_section_mm2=cable_section_results['cable_ac']['recommended_section_mm2'],
-                    voltage_drop_pct=cable_section_results['cable_ac']['voltage_drop_pct'],
-                    ampacity_A=cable_section_results['cable_ac']['ampacity_A'],
-                    resistivity_ohm_km=None,
-                    material="Cu",
-                    meets_voltage_drop=cable_section_results['cable_ac']['meets_voltage_drop'],
-                    meets_ampacity=cable_section_results['cable_ac']['meets_ampacity'],
-                    reason=cable_section_results['cable_ac']['reason']
+                chosen_section_mm2=recommended_ac_mm2,
+                voltage_drop_pct=cable_section_results['cable_ac']['voltage_drop_pct'],
+                ampacity_A=cable_section_results['cable_ac']['ampacity_A'],
+                resistivity_ohm_km=None,
+                material="Cu",
+                meets_voltage_drop=cable_section_results['cable_ac']['meets_voltage_drop'],
+                meets_ampacity=cable_section_results['cable_ac']['meets_ampacity'],
+                reason=(
+                    cable_section_results['cable_ac']['reason']
+                    if calculated_ac_mm2 >= MIN_RECOMMENDED_AC_SECTION_MM2
+                    else "Se adopta 2.5 mm² como sección mínima recomendada en AC para coordinar mejor con la protección magnetotérmica."
+                )
                 )
             ),
             protections=CableProtections(
@@ -523,7 +547,7 @@ async def simulate_pv_system(request: SimulateRequest):
                 recommended_fuse_dc_a=recommended_fuse_dc_a,
                 fuse_dc_type="gPV",
                 module_max_series_fuse_rating_a=module_max_series_fuse_a,
-                recommended_breaker_ac_a=round(cable_results['current_ac_a'] * 1.25, 1)
+                recommended_breaker_ac_a=recommended_breaker_ac_a
             ),
             energy_production=EnergyProduction(
                 annual_production_kwh=round(adjusted_annual_production, 0),
