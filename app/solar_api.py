@@ -55,14 +55,12 @@ def process_solar_api_response(data: dict) -> SolarApiData:
     
     # Procesar segmentos de tejado
     for segment in solar_potential.get('roofSegmentStats', []):
-        # Convertir azimuth de Solar API (0°=Norte, 180°=Sur) al estándar fotovoltaico
-        azimuth_solar_api = segment.get('azimuthDegrees', 180)
-        azimuth_pv_standard = (azimuth_solar_api + 180) % 360  # 0°=Norte → 180°=Sur
-        
+        azimuth_degrees = segment.get('azimuthDegrees', 180)
+
         segment_data = {
             'segment_index': segment.get('segmentIndex', 0),
             'tilt_degrees': segment.get('pitchDegrees', 30),
-            'azimuth_degrees': azimuth_pv_standard,  # Convertido
+            'azimuth_degrees': azimuth_degrees,
             'area_meters2': segment.get('stats', {}).get('areaMeters2', 0),
             'sunlight_quantiles': segment.get('stats', {}).get('sunlightQuantiles', []),
             'panels_count': segment.get('panelsCount', 0)

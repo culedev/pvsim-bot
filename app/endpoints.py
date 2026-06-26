@@ -149,7 +149,7 @@ async def simulate_pv_system(request: SimulateRequest):
                     if roof_tilt_final < 10:
                         installation_type_final = "optimal"
                         logger.info("⚡️ Tejado plano detectado (Solar API): Se fuerza configuración óptima")
-                    else:
+                    elif installation_type_final == "coplanar":
                         installation_type_final = "coplanar"
                 else:
                     logger.warning("⚠️ Solar API sin segmentos útiles: se usará método tradicional")
@@ -194,13 +194,13 @@ async def simulate_pv_system(request: SimulateRequest):
 
         # --- Selección y dimensionado inicial del sistema ---
         module = select_pv_module()
-        estimated_specific_yield = annual_irradiation_real * 0.80
+        estimated_specific_yield = annual_irradiation_real * 0.80 * request.shading_factor
         logger.info(f"⚡️ Irradiación óptima: {annual_irradiation_optimal:.0f} kWh/m² | Irradiación real: {annual_irradiation_real:.0f} kWh/m²")
         logger.info(f"⚡️ Pérdidas por orientación: {orientation_losses:.2f}% | Sombreado: {shading_losses:.2f}%")
 
         n_modules, system_kwp, total_area = calculate_system_size(
             request.annual_consumption_kwh, request.coverage_percentage,
-            estimated_specific_yield, request.roof_area_m2, module
+            estimated_specific_yield, roof_area_final, module
         )
         logger.info(f"⚡️ Dimensionado inicial: {n_modules} módulos, {system_kwp:.2f} kWp, {total_area:.1f} m²")
 
@@ -241,6 +241,10 @@ async def simulate_pv_system(request: SimulateRequest):
             current_imp_per_mppt <= inverter["max_input_current_per_mppt_a"]
         )
 
+        strings_per_mppt_compatible = (
+            strings_per_mppt_used <= inverter["strings_per_mppt"]
+        )
+
         mppt_short_circuit_current_compatible = (
             current_isc_per_mppt <= inverter["max_short_circuit_current_per_mppt_a"]
         )
@@ -248,6 +252,7 @@ async def simulate_pv_system(request: SimulateRequest):
         dc_input_compatible = (
             mppt_voltage_compatible
             and dc_voltage_compatible
+            and strings_per_mppt_compatible
             and mppt_current_compatible
             and mppt_short_circuit_current_compatible
         )
@@ -259,8 +264,10 @@ async def simulate_pv_system(request: SimulateRequest):
                     "La configuración eléctrica calculada no es compatible con la entrada DC del inversor. "
                     f"Imp/MPPT={current_imp_per_mppt:.2f} A, "
                     f"Isc/MPPT={current_isc_per_mppt:.2f} A, "
+                    f"strings/MPPT={strings_per_mppt_used}, "
                     f"límite Imp={inverter['max_input_current_per_mppt_a']:.2f} A, "
                     f"límite Isc={inverter['max_short_circuit_current_per_mppt_a']:.2f} A, "
+                    f"máx strings/MPPT={inverter['strings_per_mppt']}, "
                     f"configuración={modules_per_string}S{strings_parallel}P"
                 )
             )

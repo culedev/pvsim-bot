@@ -159,13 +159,24 @@ def calculate_system_size(annual_consumption: float, coverage_percent: float,
     Limita el sistema si el área disponible es insuficiente.
     """
     target_energy = annual_consumption * (coverage_percent / 100)
+    if specific_yield_estimate <= 0:
+        raise HTTPException(
+            status_code=422,
+            detail="El rendimiento específico estimado no es válido para dimensionar la instalación."
+        )
+
     required_kwp = target_energy / specific_yield_estimate
     module_power_kw = module["power_stc"] / 1000
     n_modules = max(1, math.ceil(required_kwp / module_power_kw))
 
     # Comprobar si hay limitación por área
-    if available_area:
+    if available_area is not None:
         max_modules_by_area = int(available_area / module["area_m2"] * 0.75)  # 75% factor de aprovechamiento realista
+        if max_modules_by_area < 1:
+            raise HTTPException(
+                status_code=422,
+                detail="El área disponible de cubierta es insuficiente para instalar al menos un módulo fotovoltaico."
+            )
         if n_modules > max_modules_by_area:
             logger.warning(f"⚠️  Área limitada: solo caben {max_modules_by_area} módulos (solicitados {n_modules})")
             n_modules = max_modules_by_area
@@ -241,7 +252,7 @@ def select_inverter(kwp_dc: float, module: dict | None = None) -> dict:
     return best_inverter
 
 def calculate_string_configuration(n_modules: int, module: dict, inverter: dict, 
-                                weather_data: pd.DataFrame) -> tuple:
+                                 weather_data: pd.DataFrame) -> tuple:
     """
     Calcula la configuración óptima de strings: módulos en serie y paralelo, considerando límites de tensión y potencia del inversor.
     Alerta si hay que usar una configuración de emergencia (no ideal).
@@ -257,14 +268,22 @@ def calculate_string_configuration(n_modules: int, module: dict, inverter: dict,
     )
 
     min_modules_string = max(2, int(inverter["mppt_min"] / v_mp_hot * 1.1))
-    max_modules_string = int(inverter["mppt_max"] / v_oc_cold * 0.9)
+    max_modules_string = int(inverter["max_dc_voltage_v"] / v_oc_cold)
+
+    if max_modules_string < min_modules_string:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "No existe una configuración de string compatible con el inversor seleccionado "
+                "bajo las condiciones térmicas de diseño."
+            )
+        )
 
     logger.info(f"⚡️ [Strings] Temperaturas extremas: T_air_min={t_air_min:.1f}°C, T_cell_max={t_cell_max:.1f}°C")
     logger.info(f"⚡️ [Strings] Rangos recomendados: {min_modules_string}-{max_modules_string} módulos/serie, V_mp_hot={v_mp_hot:.1f}V, V_oc_cold={v_oc_cold:.1f}V")
 
     # Buscar la mejor combinación posible
     best_config = None
-    min_waste = float('inf')
     possible_configs = []
     for modules_per_string in range(min_modules_string, min(max_modules_string + 1, n_modules + 1)):
         for strings_parallel in range(1, min(6, n_modules // modules_per_string + 2)):
@@ -276,8 +295,9 @@ def calculate_string_configuration(n_modules: int, module: dict, inverter: dict,
             string_voc = modules_per_string * v_oc_cold
             if not (inverter["mppt_min"] <= string_vmp <= inverter["mppt_max"]):
                 continue
+            if string_voc > inverter["max_dc_voltage_v"]:
+                continue
             waste = abs(total_modules - n_modules)
-            possible_configs.append((modules_per_string, strings_parallel, total_modules, waste))
             strings_per_mppt_used = math.ceil(strings_parallel / inverter["mppt_count"])
 
             if strings_per_mppt_used > inverter["strings_per_mppt"]:
@@ -294,16 +314,17 @@ def calculate_string_configuration(n_modules: int, module: dict, inverter: dict,
 
             if current_isc_per_mppt > inverter["max_short_circuit_current_per_mppt_a"]:
                 continue
+
+            possible_configs.append((modules_per_string, strings_parallel, total_modules, waste))
     if possible_configs:
         possible_configs.sort(key=lambda x: (x[3], x[1], -x[0]))
         best = possible_configs[0]
         best_config = (best[0], best[1], best[2])
     else:
-        modules_per_string = max(min_modules_string, 2)
-        strings_parallel = 1
-        total_modules = modules_per_string * strings_parallel
-        best_config = (modules_per_string, strings_parallel, total_modules)
-        logger.warning("⚠️  Configuración de emergencia aplicada: no se encontró combinación óptima.")
+        raise HTTPException(
+            status_code=422,
+            detail="No se encontró una configuración de strings eléctricamente compatible con el inversor seleccionado."
+        )
 
     logger.info(
         f"⚡️ [Strings] Configuración elegida: {best_config[1]} strings × "
