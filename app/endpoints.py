@@ -690,11 +690,15 @@ async def get_available_inverters():
     return {"inverters": INVERTERS}
 
 @router.post("/quick-estimate")
-async def quick_estimate(lat: float, lon: float, annual_consumption_kwh: float = 4200):
+async def quick_estimate(request: QuickEstimateRequest):
     """
     Estimación rápida (sin simulación detallada): solo energía y coste aprox.
     """
     try:
+        lat = request.lat
+        lon = request.lon
+        annual_consumption_kwh = request.annual_consumption_kwh
+
         from pvlib.iotools import get_pvgis_tmy
         _, meta = get_pvgis_tmy(lat, lon, outputformat='json', optimalangles=True)
         optimal_info = meta.get('optimal', {})
@@ -734,8 +738,9 @@ async def quick_estimate(lat: float, lon: float, annual_consumption_kwh: float =
         raise HTTPException(status_code=500, detail=f"Error en estimación: {str(e)}")
 
 @router.post("/geocode")
-async def geocode_endpoint(address: str):
+async def geocode_endpoint(request: GeocodeRequest):
     """Devuelve lat/lon para una dirección mediante Google Maps."""
+    address = request.address
     try:
         if not GOOGLE_MAPS_API_KEY:
             logger.warning("Petición de geocodificación sin API Key de Google Maps")
@@ -761,8 +766,10 @@ async def geocode_endpoint(address: str):
         }
 
 @router.post("/solar-insights")
-async def solar_insights_endpoint(lat: float, lon: float):
+async def solar_insights_endpoint(request: SolarInsightsRequest):
     """Obtiene datos solares de tejado via Google Solar API."""
+    lat = request.lat
+    lon = request.lon
     try:
         if not GOOGLE_MAPS_API_KEY:
             logger.warning("Petición de Solar Insights sin API Key")

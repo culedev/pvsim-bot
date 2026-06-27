@@ -310,15 +310,19 @@ Esto requiere `GOOGLE_MAPS_API_KEY` con acceso a `Geocoding API`.
 ### Geocodificar una dirección
 
 ```bash
-curl -X POST "http://127.0.0.1:8000/geocode?address=Calle%20Claudio%20Marcelo%2010%2C%20Cordoba" ^
-  -H "x-api-key: TU_API_KEY"
+curl -X POST "http://127.0.0.1:8000/geocode" \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: TU_API_KEY" \
+  -d '{"address":"Calle Claudio Marcelo 10, Cordoba"}'
 ```
 
 ### Consultar Solar API directamente
 
 ```bash
-curl -X POST "http://127.0.0.1:8000/solar-insights?lat=37.8882&lon=-4.7794" ^
-  -H "x-api-key: TU_API_KEY"
+curl -X POST "http://127.0.0.1:8000/solar-insights" \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: TU_API_KEY" \
+  -d '{"lat":37.8882,"lon":-4.7794}'
 ```
 
 ## Docker

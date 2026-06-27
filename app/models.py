@@ -23,6 +23,18 @@ class SimulateRequest(BaseModel):
     # Control de uso de Solar API
     use_solar_api: Optional[bool] = Field(True, description="Usar Google Solar API si está disponible")
 
+class QuickEstimateRequest(BaseModel):
+    lat: float = Field(..., ge=-90, le=90, description="Latitud en grados decimales")
+    lon: float = Field(..., ge=-180, le=180, description="Longitud en grados decimales")
+    annual_consumption_kwh: float = Field(4200, gt=0, description="Consumo anual en kWh")
+
+class GeocodeRequest(BaseModel):
+    address: str = Field(..., min_length=1, description="Dirección postal a geocodificar")
+
+class SolarInsightsRequest(BaseModel):
+    lat: float = Field(..., ge=-90, le=90, description="Latitud en grados decimales")
+    lon: float = Field(..., ge=-180, le=180, description="Longitud en grados decimales")
+
 class GeometryAnalysis(BaseModel):
     optimal_tilt: float
     optimal_azimuth: float
