@@ -2,6 +2,10 @@
 
 API en FastAPI para simular instalaciones fotovoltaicas, estimar producción y generar documentación automática mediante Google Apps Script.
 
+## Documentación técnica
+
+- Flujo detallado de simulación y fórmulas: `docs/flujo-simulacion-fv.md`
+
 ## Funcionalidades
 
 - Simulación técnica y económica de sistemas FV.
