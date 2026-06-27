@@ -117,13 +117,13 @@ Cuando hay respuesta de Google Solar API, el backend selecciona el mejor segment
 Se calcula la desviación respecto al sur:
 
 $$
-\Delta_{az} = \min\left(|azimuth - 180|,\ 360 - |azimuth - 180|\right)
+\Delta_{az} = \min(|azimuth - 180|, 360 - |azimuth - 180|)
 $$
 
 Factor de orientación:
 
 $$
-f_{orient} = \max\left(0.3,\ 1 - \frac{\Delta_{az}}{90}\right)
+f_{orient} = \max(0.3, 1 - \frac{\Delta_{az}}{90})
 $$
 
 Puntuación del segmento:
@@ -215,13 +215,13 @@ La pérdida porcentual se estima así:
 Para `tilt > 15°`:
 
 $$
-Loss_{orient} = 100 \cdot \left(1.2 \times 10^{-4} \cdot (tilt - lat + 10)^2 + 3.5 \times 10^{-5} \cdot \Delta_{az}^2\right)
+Loss_{orient} = 100 \cdot (1.2 \times 10^{-4} \cdot (tilt - lat + 10)^2 + 3.5 \times 10^{-5} \cdot \Delta_{az}^2)
 $$
 
-Para `tilt \le 15°`:
+Para `tilt ≤ 15°`:
 
 $$
-Loss_{orient} = 100 \cdot \left(1.2 \times 10^{-4} \cdot (tilt - lat + 10)^2\right)
+Loss_{orient} = 100 \cdot (1.2 \times 10^{-4} \cdot (tilt - lat + 10)^2)
 $$
 
 Finalmente se acota a un máximo del `50%`:
@@ -265,7 +265,7 @@ $$
 Si la potencia nominal del módulo es `P_mod` en `kW`:
 
 $$
-N_{mod} = \left\lceil \frac{P_{req,kWp}}{P_{mod}} \right\rceil
+N_{mod} = \lceil \frac{P_{req,kWp}}{P_{mod}} \rceil
 $$
 
 ### 10.4 Limitación por área disponible
@@ -273,7 +273,7 @@ $$
 Si hay `roof_area_m2`, el máximo de módulos se limita con un factor de aprovechamiento del `75%`:
 
 $$
-N_{max,area} = \left\lfloor \frac{roof\_area\_m2}{area_{mod}} \cdot 0.75 \right\rfloor
+N_{max,area} = \lfloor \frac{roof\_area\_m2}{area_{mod}} \cdot 0.75 \rfloor
 $$
 
 Si `N_mod > N_max,area`, el backend recorta el campo FV al máximo instalable por superficie.
@@ -327,27 +327,27 @@ T_{air,max} = P99(temp\_air)
 $$
 
 $$
-T_{cell,max} = T_{air,max} + \left(\frac{NOCT - 20}{800}\right) \cdot 1000
+T_{cell,max} = T_{air,max} + (\frac{NOCT - 20}{800}) \cdot 1000
 $$
 
 ### 12.2 Tensión del módulo corregida por temperatura
 
 $$
-V_{mp,hot} = V_{mp} \cdot \left(1 + \frac{temp\_coef\_vmp}{100} \cdot (T_{cell,max} - 25)\right)
+V_{mp,hot} = V_{mp} \cdot (1 + \frac{temp\_coef\_vmp}{100} \cdot (T_{cell,max} - 25))
 $$
 
 $$
-V_{oc,cold} = V_{oc} \cdot \left(1 + \frac{temp\_coef\_voc}{100} \cdot (T_{air,min} - 25)\right)
+V_{oc,cold} = V_{oc} \cdot (1 + \frac{temp\_coef\_voc}{100} \cdot (T_{air,min} - 25))
 $$
 
 ### 12.3 Rango admisible de módulos por string
 
 $$
-N_{series,min} = \max\left(2, \left\lfloor \frac{V_{mppt,min}}{V_{mp,hot}} \cdot 1.1 \right\rfloor \right)
+N_{series,min} = \max(2, \lfloor \frac{V_{mppt,min}}{V_{mp,hot}} \cdot 1.1 \rfloor)
 $$
 
 $$
-N_{series,max} = \left\lfloor \frac{V_{dc,max}}{V_{oc,cold}} \right\rfloor
+N_{series,max} = \lfloor \frac{V_{dc,max}}{V_{oc,cold}} \rfloor
 $$
 
 Luego se prueban combinaciones de:
@@ -396,13 +396,13 @@ $$
 Corrección conservadora de cortocircuito:
 
 $$
-I_{array,isc,corr} = N_{parallel} \cdot I_{sc} \cdot \left(1 + \frac{temp\_coef\_isc}{100} \cdot (T_{cell,max} - 25)\right)
+I_{array,isc,corr} = N_{parallel} \cdot I_{sc} \cdot (1 + \frac{temp\_coef\_isc}{100} \cdot (T_{cell,max} - 25))
 $$
 
 ### 13.3 Corriente por MPPT
 
 $$
-strings_{MPPT} = \left\lceil \frac{N_{parallel}}{MPPT_{count}} \right\rceil
+strings_{MPPT} = \lceil \frac{N_{parallel}}{MPPT_{count}} \rceil
 $$
 
 $$
@@ -410,7 +410,7 @@ I_{MPPT,imp} = strings_{MPPT} \cdot I_{mp}
 $$
 
 $$
-I_{MPPT,isc} = strings_{MPPT} \cdot I_{sc} \cdot \left(1 + \frac{temp\_coef\_isc}{100} \cdot (T_{cell,max} - 25)\right)
+I_{MPPT,isc} = strings_{MPPT} \cdot I_{sc} \cdot (1 + \frac{temp\_coef\_isc}{100} \cdot (T_{cell,max} - 25))
 $$
 
 La entrada DC del inversor es válida solo si todas estas comprobaciones son verdaderas:
@@ -439,20 +439,20 @@ $$
 $$
 
 $$
-\Delta V_{\%} = \frac{\Delta V}{V_{nom}} \cdot 100
+\Delta V_{pct} = \frac{\Delta V}{V_{nom}} \cdot 100
 $$
 
 Donde:
 
 - `L` es la longitud del tramo
 - `I` es la corriente del tramo
-- `\rho` es la resistividad
+- `ρ` es la resistividad
 - `S` es la sección del conductor
 
 El criterio de proyecto actual usa:
 
 $$
-\Delta V_{\%,max} = 1.5\%
+\Delta V_{pct,max} = 1.5
 $$
 
 ## 15. Pérdidas de cableado
@@ -480,7 +480,7 @@ $$
 $$
 
 $$
-\Delta V_{dc,\%} = \frac{\Delta V_{dc}}{N_{series} \cdot V_{mp}} \cdot 100
+\Delta V_{dc,pct} = \frac{\Delta V_{dc}}{N_{series} \cdot V_{mp}} \cdot 100
 $$
 
 ### 15.3 Caída de tensión AC
@@ -490,7 +490,7 @@ $$
 $$
 
 $$
-\Delta V_{ac,\%} = \frac{\Delta V_{ac}}{230} \cdot 100
+\Delta V_{ac,pct} = \frac{\Delta V_{ac}}{230} \cdot 100
 $$
 
 ### 15.4 Pérdidas por efecto Joule
@@ -502,13 +502,13 @@ $$
 En DC:
 
 $$
-P_{loss,dc,\%} = \frac{P_{loss,dc}}{P_{nom,dc}} \cdot 100
+P_{loss,dc,pct} = \frac{P_{loss,dc}}{P_{nom,dc}} \cdot 100
 $$
 
 En AC:
 
 $$
-P_{loss,ac,\%} = \frac{P_{loss,ac}}{P_{nom,ac}} \cdot 100
+P_{loss,ac,pct} = \frac{P_{loss,ac}}{P_{nom,ac}} \cdot 100
 $$
 
 ## 16. Simulación de producción con pvlib
@@ -607,7 +607,7 @@ El perfil combina:
 ### 19.1 Factor estacional
 
 $$
-f_{season} = 1 + 0.3 \cdot \cos\left(2\pi \cdot \frac{dayOfYear - 21}{365}\right)
+f_{season} = 1 + 0.3 \cdot \cos(2\pi \cdot \frac{dayOfYear - 21}{365})
 $$
 
 ### 19.2 Factor fin de semana
@@ -755,7 +755,7 @@ $$
 Se parte de la corriente de cortocircuito corregida por string:
 
 $$
-I_{sc,string,corr} = I_{sc} \cdot \left(1 + \frac{temp\_coef\_isc}{100} \cdot (T_{cell,max} - 25)\right)
+I_{sc,string,corr} = I_{sc} \cdot (1 + \frac{temp\_coef\_isc}{100} \cdot (T_{cell,max} - 25))
 $$
 
 Corriente mínima de protección:
